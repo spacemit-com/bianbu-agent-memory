@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = remove ] || [ "$1" = upgrade ]; then
+    deb-systemd-invoke stop bianbu-agent-memoryd.service >/dev/null 2>&1 || true
+    # There is no Memory-owned inference process left to stop: the embedding
+    # model's download and llama-server are owned by the spacemit-ai-gateway,
+    # which this package neither ships nor controls.
+fi
+
+#DEBHELPER#
+exit 0

@@ -1,0 +1,291 @@
+#!/usr/bin/python3
+"""Provision the Memory embedding model through spacemit-ai-gateway.
+
+Memory consumes embeddings from the Gateway's Embed domain instead of running
+its own llama-server, so this one-shot provisioner owns what the removed
+bianbu-agent-memory-embedding.service and its download script used to do: make
+the model present (download) and loaded with the start-up arguments Memory's
+vectors were validated against.
+
+Two Gateway knobs are deliberately left alone, because the Agent OS intent
+module serves its `bibit-embed` model from this same Embed domain:
+
+* ``POST /models/switch`` is never called, so the domain's ``_current_model``
+  pointer keeps pointing at ``bibit-embed``.
+* ``embed.backend`` and ``embed.default_args`` are never written.  The model is
+  loaded through an explicit ``extra_args`` list instead: bibit's own deploy
+  tooling rewrites ``embed.default_args`` in the effective Gateway
+  configuration, while ``merge_and_dedup_args`` gives ``extra_args``
+  precedence, which is what makes Memory immune to that rewrite.
+
+Exit status: 0 when nothing needed doing - including "no Gateway on this
+device", which is not an error because Memory degrades to lexical search - and
+1 only on a real provisioning failure.
+"""
+
+import argparse
+import json
+import math
+import sys
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_MODEL = "qwen3-embedding-0.6b-q8_0"
+# Pinned per-model start-up arguments.  --pooling last is what the model's GGUF
+# already declares and what the Q8_0 vectors were validated against; it is
+# passed explicitly so a future rewrite of embed.default_args cannot move this
+# model to a different embedding space under an unchanged dimension count.
+# --ctx-size/--parallel keep the server at the window and slot count Memory's
+# clipping budget and latency measurements assume (the Gateway's own defaults
+# are the model window, 32768, with 4 slots).
+DEFAULT_EXTRA_ARGS = [
+    "--pooling", "last",
+    "--embd-normalize", "2",
+    "--ctx-size", "4096",
+    "--parallel", "1",
+]
+DEFAULT_GATEWAY = "http://127.0.0.1:18790"
+DEFAULT_GOLDEN = "/usr/share/bianbu-agent-memoryd/embedding_parity_golden.json"
+LOG_PREFIX = "[memory-embedding-provision]"
+
+
+def log(message):
+    print("%s %s" % (LOG_PREFIX, message), flush=True)
+
+
+def call(method, url, payload=None, timeout=30.0):
+    """Return (status, body); status is None when the connection itself failed.
+
+    ``body`` is the decoded JSON, or raw text when the payload was not JSON (a
+    non-2xx ``detail``, or a 2xx page that did not come from the Gateway).  It
+    is never an exception: callers all have a defined "Gateway is unusable"
+    path, and a traceback here would turn a degraded device into a failed
+    boot-time unit.
+    """
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        url, data=data, method=method, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            if not raw:
+                return response.status, None
+            try:
+                return response.status, json.loads(raw)
+            except ValueError:
+                return response.status, raw.decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", "replace")
+        try:
+            raw = json.loads(raw).get("detail", raw)
+        except ValueError:
+            pass
+        return error.code, raw
+    except OSError as error:
+        return None, str(error)
+
+
+def cosine(left, right):
+    dot = sum(a * b for a, b in zip(left, right))
+    norm_left = math.sqrt(sum(a * a for a in left))
+    norm_right = math.sqrt(sum(b * b for b in right))
+    if not norm_left or not norm_right:
+        return 0.0
+    return dot / (norm_left * norm_right)
+
+
+def model_entry(embed_url, model):
+    status, body = call("GET", "%s/models" % embed_url)
+    if status != 200:
+        return None, "cannot list models (HTTP %s): %s" % (status, body)
+    if not isinstance(body, list):
+        return None, "unexpected /models payload: %s" % (body,)
+    for entry in body or []:
+        if entry.get("id") == model:
+            return entry, None
+    return None, "model '%s' is not defined by this Gateway" % model
+
+
+def ensure_downloaded(embed_url, model, entry, timeout, interval):
+    state = entry.get("status")
+    if state in ("downloaded", "loading", "loaded"):
+        log("model %s already present (status=%s)" % (model, state))
+        return True
+    if state != "downloading":
+        status, body = call("POST", "%s/models/%s/download" % (embed_url, model))
+        if status != 200:
+            log("cannot start download (HTTP %s): %s" % (status, body))
+            return False
+        log("download started for %s" % model)
+    else:
+        log("download already in progress for %s" % model)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        status, body = call("GET", "%s/models/%s/download" % (embed_url, model))
+        if status != 200 or not isinstance(body, dict):
+            log("cannot read download progress (HTTP %s): %s" % (status, body))
+            return False
+        state = body.get("status")
+        progress = body.get("progress") or 0.0
+        if state == "downloaded":
+            log("model %s downloaded" % model)
+            return True
+        if state == "error":
+            log("gateway reported a download error for %s" % model)
+            return False
+        if time.monotonic() >= deadline:
+            log(
+                "download still %s (%.0f%%) after %ds; leaving it running"
+                % (state, progress * 100.0, timeout)
+            )
+            return False
+        time.sleep(interval)
+
+
+def ensure_loaded(embed_url, model, extra_args, entry):
+    # Loading is idempotent in the Gateway: while the model's process is already
+    # running, POST /models/load reports success without restarting it.  A
+    # process started by the inference path is auto-loaded with the shared
+    # embed.default_args instead of the pinned list below, so an already-running
+    # model has to be stopped first for this call to be the one that decides its
+    # start-up arguments.  The unload names this model only, so the intent
+    # module's bibit-embed entry is never touched.
+    if entry.get("status") == "loaded":
+        status, body = call(
+            "POST", "%s/models/unload" % embed_url, {"model": model}, timeout=120.0
+        )
+        if status != 200:
+            log("cannot stop the already-running %s (HTTP %s): %s" % (model, status, body))
+            return False
+        log("stopped the already-running %s so its start-up arguments are pinned" % model)
+    status, body = call(
+        "POST",
+        "%s/models/load" % embed_url,
+        {"model": model, "extra_args": extra_args},
+        # The Gateway health-checks a freshly spawned llama-server for up to
+        # 120 s before it answers this call.
+        timeout=180.0,
+    )
+    if status != 200:
+        log("cannot load %s (HTTP %s): %s" % (status, body))
+        return False
+    log("model %s loaded with %s" % (model, " ".join(extra_args)))
+    return True
+
+
+def verify(embed_url, model, dims, golden_path):
+    texts = ["probe"]
+    expected = None
+    if golden_path:
+        try:
+            with open(golden_path, "r", encoding="utf-8") as handle:
+                golden = json.load(handle)
+            texts = golden["texts"]
+            expected = golden["vectors"]
+            dims = golden.get("dims", dims)
+        except (OSError, ValueError, KeyError) as error:
+            log("ignoring unusable golden file %s: %s" % (golden_path, error))
+
+    status, body = call(
+        "POST",
+        "%s/embeddings" % embed_url,
+        {"model": model, "input": texts},
+        timeout=300.0,
+    )
+    if status != 200:
+        log("embedding probe failed (HTTP %s): %s" % (status, body))
+        return False
+    try:
+        vectors = [item["embedding"] for item in body["data"]]
+    except (KeyError, TypeError):
+        log("embedding probe returned an unexpected payload")
+        return False
+    if len(vectors) != len(texts) or not vectors:
+        log("embedding probe returned %d vectors for %d texts" % (len(vectors), len(texts)))
+        return False
+    if len(vectors[0]) != dims:
+        log("dimension mismatch: got %d, expected %d" % (len(vectors[0]), dims))
+        return False
+    if expected is None:
+        log("model %s answers with %d dimensions" % (model, dims))
+        return True
+
+    worst = (1.0, "")
+    for text, got, want in zip(texts, vectors, expected):
+        score = cosine(got, want)
+        if score < worst[0]:
+            worst = (score, text)
+    log("parity: worst cosine %.6f over %d texts" % (worst[0], len(texts)))
+    if worst[0] < 0.999:
+        log(
+            "parity gate failed on %r - the model is serving a different "
+            "embedding space than the golden vectors were captured from" % worst[1]
+        )
+        return False
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--gateway", default=DEFAULT_GATEWAY)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--dims", type=int, default=1024)
+    parser.add_argument("--extra-args", default=" ".join(DEFAULT_EXTRA_ARGS))
+    parser.add_argument("--golden", default=DEFAULT_GOLDEN)
+    parser.add_argument("--no-verify", action="store_true")
+    parser.add_argument("--download-timeout", type=int, default=1800)
+    parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report the model's state without downloading or loading anything",
+    )
+    args = parser.parse_args()
+
+    embed_url = args.gateway.rstrip("/") + "/v1/embed"
+    extra_args = [token for token in args.extra_args.split(" ") if token]
+
+    status, body = call("GET", "%s/healthz" % embed_url, timeout=10.0)
+    if status is None:
+        log("no Gateway at %s (%s); semantic indexing stays off" % (args.gateway, body))
+        return 0
+    log("gateway embed domain: %s" % json.dumps(body))
+
+    entry, problem = model_entry(embed_url, args.model)
+    if entry is None:
+        log("%s; semantic indexing stays off" % problem)
+        return 0
+
+    if args.check:
+        log("model %s status=%s" % (args.model, entry.get("status")))
+        return 0
+
+    if not ensure_downloaded(
+        embed_url, args.model, entry, args.download_timeout, args.poll_interval
+    ):
+        return 1
+    if not ensure_loaded(embed_url, args.model, extra_args, entry):
+        return 1
+    if args.no_verify:
+        return 0
+    if not verify(embed_url, args.model, args.dims, args.golden):
+        return 1
+    # Name the artifact that was just verified, the way the intent package does
+    # at install time: one line with the path on disk, so "which GGUF is this
+    # Gateway serving" is answerable from the journal without a second query.
+    # The entry is re-read because a model downloaded during this very run only
+    # reports its local_path once the download has finished.
+    entry, _ = model_entry(embed_url, args.model)
+    path = (entry or {}).get("local_path")
+    if isinstance(path, str) and path:
+        log("verified Gateway model at %s" % path)
+    else:
+        log("verified Gateway model %s (Gateway reports no local_path)" % args.model)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

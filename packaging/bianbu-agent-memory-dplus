@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+from bianbu_agent_sdk.memory.dplus_service import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

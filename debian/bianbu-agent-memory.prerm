@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = remove ] || [ "$1" = upgrade ]; then
+    deb-systemd-invoke stop bianbu-agent-memory-adapter.service >/dev/null 2>&1 || true
+fi
+
+#DEBHELPER#
+exit 0

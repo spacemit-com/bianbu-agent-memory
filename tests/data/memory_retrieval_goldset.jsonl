@@ -1,0 +1,100 @@
+{"case_id":"gold-001","category":"paraphrase","query":"屏幕太亮了，想把界面换成暗色的该怎么办","expected_memory_id":"corpus-0001"}
+{"case_id":"gold-002","category":"paraphrase","query":"怎么给 Python 项目装第三方包","expected_memory_id":"corpus-0002"}
+{"case_id":"gold-003","category":"paraphrase","query":"代码缩进用 tab 还是空格","expected_memory_id":"corpus-0003"}
+{"case_id":"gold-004","category":"paraphrase","query":"什么时候安排代码评审","expected_memory_id":"corpus-0004"}
+{"case_id":"gold-005","category":"paraphrase","query":"中午饭一般怎么解决","expected_memory_id":"corpus-0005"}
+{"case_id":"gold-006","category":"paraphrase","query":"每天上下班的通勤路线是什么","expected_memory_id":"corpus-0006"}
+{"case_id":"gold-007","category":"paraphrase","query":"外接显示器摆在桌子哪一边","expected_memory_id":"corpus-0007"}
+{"case_id":"gold-008","category":"paraphrase","query":"饮食上有什么忌口","expected_memory_id":"corpus-0008"}
+{"case_id":"gold-009","category":"paraphrase","query":"memory 项目的源代码仓库放在哪里","expected_memory_id":"corpus-0009"}
+{"case_id":"gold-010","category":"paraphrase","query":"开会的记录都存在什么地方","expected_memory_id":"corpus-0010"}
+{"case_id":"gold-011","category":"paraphrase","query":"一般什么时间段处理邮件","expected_memory_id":"corpus-0011"}
+{"case_id":"gold-012","category":"paraphrase","query":"打电话找不到他，什么方式联系比较靠谱","expected_memory_id":"corpus-0012"}
+{"case_id":"gold-013","category":"paraphrase","query":"家里的灯是怎么控制的","expected_memory_id":"corpus-0013"}
+{"case_id":"gold-014","category":"paraphrase","query":"SQL 的关键字需要小写吗","expected_memory_id":"corpus-0014"}
+{"case_id":"gold-015","category":"paraphrase","query":"平时记笔记用什么软件","expected_memory_id":"corpus-0015"}
+{"case_id":"gold-016","category":"paraphrase","query":"坐飞机喜欢什么座位","expected_memory_id":"corpus-0016"}
+{"case_id":"gold-017","category":"paraphrase","query":"帮他点咖啡有什么讲究","expected_memory_id":"corpus-0017"}
+{"case_id":"gold-018","category":"paraphrase","query":"电脑里的重要文件怎么备份","expected_memory_id":"corpus-0018"}
+{"case_id":"gold-019","category":"paraphrase","query":"周末有什么爱好","expected_memory_id":"corpus-0019"}
+{"case_id":"gold-020","category":"paraphrase","query":"孩子星期几上兴趣班","expected_memory_id":"corpus-0020"}
+{"case_id":"gold-021","category":"negation","query":"请他吃饭可以去川菜馆吗","expected_memory_id":"corpus-0021"}
+{"case_id":"gold-022","category":"negation","query":"想给他买杯提神的饮料，买什么好","expected_memory_id":"corpus-0022"}
+{"case_id":"gold-023","category":"negation","query":"个性化广告推荐有没有打开","expected_memory_id":"corpus-0023"}
+{"case_id":"gold-024","category":"negation","query":"以前的手机号还能联系上他吗","expected_memory_id":"corpus-0024"}
+{"case_id":"gold-025","category":"negation","query":"项目现在还用 PostgreSQL 吗","expected_memory_id":"corpus-0025"}
+{"case_id":"gold-026","category":"negation","query":"团建去爬山他参不参加","expected_memory_id":"corpus-0026"}
+{"case_id":"gold-027","category":"negation","query":"借他一台 Mac 电脑用用行吗","expected_memory_id":"corpus-0027"}
+{"case_id":"gold-028","category":"negation","query":"能在他的社交账号上看到工作动态吗","expected_memory_id":"corpus-0028"}
+{"case_id":"gold-029","category":"negation","query":"需要每天给他发日报提醒吗","expected_memory_id":"corpus-0029"}
+{"case_id":"gold-030","category":"negation","query":"开会的时候允许录音吗","expected_memory_id":"corpus-0030"}
+{"case_id":"gold-031","category":"negation","query":"他的抖音号是多少","expected_memory_id":"corpus-0031"}
+{"case_id":"gold-032","category":"negation","query":"新功能里还能调用旧的同步接口吗","expected_memory_id":"corpus-0032"}
+{"case_id":"gold-033","category":"word_order","query":"上班的地点在杭州的哪个区","expected_memory_id":"corpus-0033"}
+{"case_id":"gold-034","category":"word_order","query":"docs/deploy.md 这个文件里存的是什么","expected_memory_id":"corpus-0034"}
+{"case_id":"gold-035","category":"word_order","query":"收发邮件用的什么客户端","expected_memory_id":"corpus-0035"}
+{"case_id":"gold-036","category":"word_order","query":"转前台分机拨多少","expected_memory_id":"corpus-0036"}
+{"case_id":"gold-037","category":"word_order","query":"键盘是什么配列什么轴","expected_memory_id":"corpus-0037"}
+{"case_id":"gold-038","category":"word_order","query":"团队周会定在什么时间","expected_memory_id":"corpus-0038"}
+{"case_id":"gold-039","category":"word_order","query":"memoryd 的服务端口用哪个","expected_memory_id":"corpus-0039"}
+{"case_id":"gold-040","category":"word_order","query":"入职日期是哪一天","expected_memory_id":"corpus-0040"}
+{"case_id":"gold-041","category":"word_order","query":"鼠标用哪只手操作","expected_memory_id":"corpus-0041"}
+{"case_id":"gold-042","category":"word_order","query":"npm 的内部镜像源地址是多少","expected_memory_id":"corpus-0042"}
+{"case_id":"gold-043","category":"mixed_language","query":"release 模式怎么编译项目","expected_memory_id":"corpus-0043"}
+{"case_id":"gold-044","category":"mixed_language","query":"zshrc 配置文件放在哪","expected_memory_id":"corpus-0044"}
+{"case_id":"gold-045","category":"mixed_language","query":"测试机怎么 ssh 上去","expected_memory_id":"corpus-0045"}
+{"case_id":"gold-046","category":"mixed_language","query":"migration 脚本放在哪个目录","expected_memory_id":"corpus-0046"}
+{"case_id":"gold-047","category":"mixed_language","query":"怎么让 git 提交历史保持线性","expected_memory_id":"corpus-0047"}
+{"case_id":"gold-048","category":"mixed_language","query":"blog 用什么静态站框架搭的","expected_memory_id":"corpus-0048"}
+{"case_id":"gold-049","category":"mixed_language","query":"CI 上单测跑什么命令","expected_memory_id":"corpus-0049"}
+{"case_id":"gold-050","category":"mixed_language","query":"终端的 prompt 是怎么弄好看的","expected_memory_id":"corpus-0050"}
+{"case_id":"gold-051","category":"mixed_language","query":"Linux 下面怎么截屏","expected_memory_id":"corpus-0051"}
+{"case_id":"gold-052","category":"mixed_language","query":"proxy 的端口是多少","expected_memory_id":"corpus-0052"}
+{"case_id":"gold-053","category":"mixed_language","query":"开发板怎么连，ssh 地址是什么","expected_memory_id":"corpus-0053"}
+{"case_id":"gold-054","category":"mixed_language","query":"看视频倍速习惯开多少","expected_memory_id":"corpus-0054"}
+{"case_id":"gold-055","category":"mixed_language","query":"搜代码用 rg 还是 grep","expected_memory_id":"corpus-0055"}
+{"case_id":"gold-056","category":"mixed_language","query":"docker 容器的日志怎么实时看","expected_memory_id":"corpus-0056"}
+{"case_id":"gold-057","category":"mixed_language","query":"markdown 的表格对不齐怎么办","expected_memory_id":"corpus-0057"}
+{"case_id":"gold-058","category":"short_query","query":"时区","expected_memory_id":"corpus-0058"}
+{"case_id":"gold-059","category":"short_query","query":"生日","expected_memory_id":"corpus-0059"}
+{"case_id":"gold-060","category":"short_query","query":"工位","expected_memory_id":"corpus-0060"}
+{"case_id":"gold-061","category":"short_query","query":"报销","expected_memory_id":"corpus-0061"}
+{"case_id":"gold-062","category":"short_query","query":"工号","expected_memory_id":"corpus-0062"}
+{"case_id":"gold-063","category":"short_query","query":"wifi 密码","expected_memory_id":"corpus-0063"}
+{"case_id":"gold-064","category":"short_query","query":"打印机","expected_memory_id":"corpus-0064"}
+{"case_id":"gold-065","category":"short_query","query":"直属领导","expected_memory_id":"corpus-0065"}
+{"case_id":"gold-066","category":"short_query","query":"奶茶","expected_memory_id":"corpus-0066"}
+{"case_id":"gold-067","category":"short_query","query":"紧急联系人","expected_memory_id":"corpus-0067"}
+{"case_id":"gold-068","category":"long_query","query":"公积金预留的手机号已经不用了，想换成现在这个号码应该怎么处理","expected_memory_id":"corpus-0068"}
+{"case_id":"gold-069","category":"long_query","query":"上次体检之后医生让我在吃的和运动方面注意些什么来着","expected_memory_id":"corpus-0069"}
+{"case_id":"gold-070","category":"long_query","query":"家里那台放电影和照片的存储机器是什么型号，硬盘是怎么配的","expected_memory_id":"corpus-0070"}
+{"case_id":"gold-071","category":"long_query","query":"帮他订出差的酒店有什么讲究，是不是要安静一点的房间","expected_memory_id":"corpus-0071"}
+{"case_id":"gold-072","category":"long_query","query":"跑十万条记录的那个性能测试脚本放在哪里，用什么命令执行","expected_memory_id":"corpus-0072"}
+{"case_id":"gold-073","category":"long_query","query":"周末带孩子的日程一般是怎么安排的，周六周天分别做什么","expected_memory_id":"corpus-0073"}
+{"case_id":"gold-074","category":"long_query","query":"代码要合并的话需要几个人批准才行，有没有例外的情况","expected_memory_id":"corpus-0074"}
+{"case_id":"gold-075","category":"long_query","query":"车平时停在哪个车位，充电桩装在什么位置","expected_memory_id":"corpus-0075"}
+{"case_id":"gold-076","category":"long_query","query":"办公室冬天冷，他工位上有没有什么取暖的东西","expected_memory_id":"corpus-0076"}
+{"case_id":"gold-077","category":"long_query","query":"之前办的健身卡还剩下多少节课没有约","expected_memory_id":"corpus-0077"}
+{"case_id":"gold-078","category":"long_query","query":"基准测试的报告要放到哪个目录下面，文件名按什么规则起","expected_memory_id":"corpus-0078"}
+{"case_id":"gold-079","category":"long_query","query":"线上出了故障之后，复盘会要求在多长时间内开完","expected_memory_id":"corpus-0079"}
+{"case_id":"gold-080","category":"long_query","query":"老家是哪里的，过春节一般回去待多久","expected_memory_id":"corpus-0080"}
+{"case_id":"gold-081","category":"distractor","query":"跑深度学习训练应该用哪台机器","expected_memory_id":"corpus-0081"}
+{"case_id":"gold-082","category":"distractor","query":"晚上加班的时候台灯开什么光","expected_memory_id":"corpus-0082"}
+{"case_id":"gold-083","category":"distractor","query":"memory 项目主要用什么语言写的","expected_memory_id":"corpus-0083"}
+{"case_id":"gold-084","category":"distractor","query":"团队内部的文档规定用什么语言写","expected_memory_id":"corpus-0084"}
+{"case_id":"gold-085","category":"distractor","query":"后端的单元测试用什么框架","expected_memory_id":"corpus-0085"}
+{"case_id":"gold-086","category":"distractor","query":"他家养的猫叫什么名字","expected_memory_id":"corpus-0086"}
+{"case_id":"gold-087","category":"distractor","query":"他的手机是什么牌子什么颜色","expected_memory_id":"corpus-0087"}
+{"case_id":"gold-088","category":"distractor","query":"周报最晚什么时候要交","expected_memory_id":"corpus-0088"}
+{"case_id":"gold-089","category":"distractor","query":"跑步的时候戴的是哪个耳机","expected_memory_id":"corpus-0089"}
+{"case_id":"gold-090","category":"distractor","query":"工作日的早餐一般吃什么","expected_memory_id":"corpus-0090"}
+{"case_id":"gold-091","category":"distractor","query":"生产环境装的哪个版本的 Ubuntu","expected_memory_id":"corpus-0091"}
+{"case_id":"gold-092","category":"distractor","query":"写代码用的编程字体是什么","expected_memory_id":"corpus-0092"}
+{"case_id":"gold-093","category":"distractor","query":"数据库的备份要保留多长时间","expected_memory_id":"corpus-0093"}
+{"case_id":"gold-094","category":"distractor","query":"做技术分享的时候习惯用什么形式","expected_memory_id":"corpus-0094"}
+{"case_id":"gold-095","category":"distractor","query":"他眼睛的情况怎么样，配的什么眼镜","expected_memory_id":"corpus-0095"}
+{"case_id":"gold-096","category":"distractor","query":"发新版本的时候版本号是怎么定的","expected_memory_id":"corpus-0096"}
+{"case_id":"gold-097","category":"distractor","query":"出去旅游住宿喜欢住酒店还是民宿","expected_memory_id":"corpus-0097"}
+{"case_id":"gold-098","category":"distractor","query":"他的血型是什么","expected_memory_id":"corpus-0098"}
+{"case_id":"gold-099","category":"distractor","query":"网购的东西一般寄到哪里","expected_memory_id":"corpus-0099"}
+{"case_id":"gold-100","category":"distractor","query":"上高速的过路费从哪张卡里扣","expected_memory_id":"corpus-0100"}

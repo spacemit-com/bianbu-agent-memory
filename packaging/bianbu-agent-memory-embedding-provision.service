@@ -1,0 +1,35 @@
+[Unit]
+Description=Provision the Bianbu Agent Memory embedding model via spacemit-ai-gateway
+Documentation=file:///usr/share/doc/bianbu-agent-memoryd/GATEWAY_EMBEDDING_INTEGRATION.md
+# Soft dependency in both directions.  The gateway is a separate package, and
+# Memory degrades to lexical search when it is absent or has no embedding model,
+# so this unit must never gate the boot.  Ordering only makes the common case
+# (gateway installed and starting at boot) succeed on the first attempt.
+Wants=spacemit-ai-gateway.service
+After=spacemit-ai-gateway.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The provisioner only speaks HTTP to the Gateway's loopback Embed domain, which
+# spawns the inference process under the Gateway's own user.  Running as this
+# package's own service account keeps the unit self-contained: unlike the
+# platform 'bianbu' account, the user exists even while an image is built.
+User=bianbu-memory
+Group=bianbu-agent
+ExecStart=/usr/libexec/bianbu-agent-memory-embedding-provision
+# A first install moves a ~640 MiB GGUF through the Gateway's downloader; allow
+# it to finish.  The bound is what keeps a stalled mirror from pinning the unit.
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

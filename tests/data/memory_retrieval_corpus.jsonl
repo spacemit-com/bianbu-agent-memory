@@ -1,0 +1,300 @@
+{"memory_id":"corpus-0001","kind":"preference","text":"用户偏好：终端与代码编辑器都使用深色主题配色，夜间工作不刺眼"}
+{"memory_id":"corpus-0002","kind":"preference","text":"用户已从 pip 迁移，现在统一使用 uv 管理 Python 项目的依赖"}
+{"memory_id":"corpus-0003","kind":"preference","text":"用户的代码缩进偏好是 4 个空格，从不使用 Tab"}
+{"memory_id":"corpus-0004","kind":"preference","text":"团队约定每周五下午固定做代码评审，雷打不动"}
+{"memory_id":"corpus-0005","kind":"episodic","text":"用户午饭一般在公司楼下的兰州拉面馆解决"}
+{"memory_id":"corpus-0006","kind":"profile","text":"用户的通勤方式是地铁 10 号线，从望京西站到西二旗站"}
+{"memory_id":"corpus-0007","kind":"preference","text":"用户的笔记本是 16 英寸 ThinkPad，外接显示器摆放在左手边"}
+{"memory_id":"corpus-0008","kind":"profile","text":"用户对花生严重过敏，含花生的食品绝对不能入口"}
+{"memory_id":"corpus-0009","kind":"project","text":"bianbu-agent-memory 项目的主仓库在内部 GitLab 的 memory 组下面"}
+{"memory_id":"corpus-0010","kind":"preference","text":"用户的会议纪要统一记录在飞书文档里"}
+{"memory_id":"corpus-0011","kind":"preference","text":"用户习惯早上 9 点前处理完邮件，下午留整块时间写代码"}
+{"memory_id":"corpus-0012","kind":"preference","text":"用户的手机常年静音，重要提醒靠手表震动"}
+{"memory_id":"corpus-0013","kind":"preference","text":"用户家里用小米智能音箱控制灯光"}
+{"memory_id":"corpus-0014","kind":"preference","text":"用户写 SQL 时关键字一律大写"}
+{"memory_id":"corpus-0015","kind":"preference","text":"用户的学习笔记都记在 Obsidian 里，用 Markdown 格式"}
+{"memory_id":"corpus-0016","kind":"preference","text":"用户出差默认订靠窗的座位"}
+{"memory_id":"corpus-0017","kind":"preference","text":"用户喝咖啡只喝美式，不加糖不加奶"}
+{"memory_id":"corpus-0018","kind":"preference","text":"用户的重要数据每周日晚上自动备份到移动硬盘"}
+{"memory_id":"corpus-0019","kind":"episodic","text":"用户周末喜欢去爬香山"}
+{"memory_id":"corpus-0020","kind":"profile","text":"用户的女儿在学钢琴，每周三晚上有课"}
+{"memory_id":"corpus-0021","kind":"profile","text":"用户完全不吃辣，川菜和湘菜都无法接受"}
+{"memory_id":"corpus-0022","kind":"preference","text":"用户不喝任何含咖啡因的饮料，晚上会失眠"}
+{"memory_id":"corpus-0023","kind":"preference","text":"用户明确拒绝开启个性化广告推荐"}
+{"memory_id":"corpus-0024","kind":"profile","text":"用户的旧手机号已经停用，现在用尾号 6688 的号码"}
+{"memory_id":"corpus-0025","kind":"decision","text":"项目放弃了 PostgreSQL 方案，最终采用 SQLite 作为本地存储"}
+{"memory_id":"corpus-0026","kind":"preference","text":"用户不参加团建活动中的任何户外项目"}
+{"memory_id":"corpus-0027","kind":"profile","text":"用户没有 macOS 设备，手机电脑分别是安卓和 Windows"}
+{"memory_id":"corpus-0028","kind":"preference","text":"用户从不在社交媒体上发布工作内容"}
+{"memory_id":"corpus-0029","kind":"preference","text":"用户不需要日报提醒，认为那是噪音"}
+{"memory_id":"corpus-0030","kind":"decision","text":"团队决定：会议禁止录音，但允许文字纪要"}
+{"memory_id":"corpus-0031","kind":"preference","text":"用户不刷抖音，短视频只在 B 站看"}
+{"memory_id":"corpus-0032","kind":"decision","text":"旧的 v1 同步接口已经废弃，新代码禁止调用"}
+{"memory_id":"corpus-0033","kind":"profile","text":"用户在杭州的滨江区上班"}
+{"memory_id":"corpus-0034","kind":"reference","text":"部署步骤的文档保存在 docs/deploy.md"}
+{"memory_id":"corpus-0035","kind":"preference","text":"用户的邮件客户端用的是 Thunderbird"}
+{"memory_id":"corpus-0036","kind":"fact","text":"公司前台的分机号是 8001"}
+{"memory_id":"corpus-0037","kind":"preference","text":"用户用 75 配列的机械键盘，轴体是红轴"}
+{"memory_id":"corpus-0038","kind":"project","text":"团队的周会定在周一上午十点"}
+{"memory_id":"corpus-0039","kind":"reference","text":"常用端口备忘：memoryd 相关服务统一使用 18800 到 18899 区段"}
+{"memory_id":"corpus-0040","kind":"fact","text":"用户的入职日期是 2023 年 4 月 3 日"}
+{"memory_id":"corpus-0041","kind":"preference","text":"用户用左手握鼠标，习惯把鼠标放在键盘左侧"}
+{"memory_id":"corpus-0042","kind":"reference","text":"内部 npm 镜像地址是 registry.internal.example.com"}
+{"memory_id":"corpus-0043","kind":"preference","text":"用户构建项目统一用 cargo build --release"}
+{"memory_id":"corpus-0044","kind":"preference","text":"用户的 shell 是 zsh，配置文件在 ~/.zshrc"}
+{"memory_id":"corpus-0045","kind":"preference","text":"用户通过 ssh 跳板机连测试设备，命令带 -A 参数转发密钥"}
+{"memory_id":"corpus-0046","kind":"project","text":"数据库的迁移脚本统一放在 migrations 目录"}
+{"memory_id":"corpus-0047","kind":"preference","text":"用户用 git rebase 而不是 merge 来保持提交历史线性"}
+{"memory_id":"corpus-0048","kind":"preference","text":"用户的博客用 Hugo 搭建，主题是 PaperMod"}
+{"memory_id":"corpus-0049","kind":"project","text":"CI 上跑的测试命令是 pytest -x -q"}
+{"memory_id":"corpus-0050","kind":"preference","text":"用户的终端提示符用 starship 美化"}
+{"memory_id":"corpus-0051","kind":"preference","text":"用户在 Linux 下的截图工具是 Flameshot"}
+{"memory_id":"corpus-0052","kind":"preference","text":"用户的代理配置写在 .proxy.env 里，端口 7890"}
+{"memory_id":"corpus-0053","kind":"profile","text":"测试板卡的 IP 是 192.168.1.45，账号是 bianbu"}
+{"memory_id":"corpus-0054","kind":"preference","text":"用户看技术视频习惯开 1.5 倍速"}
+{"memory_id":"corpus-0055","kind":"preference","text":"用户用 ripgrep 代替 grep 搜代码"}
+{"memory_id":"corpus-0056","kind":"reference","text":"看 Docker 容器日志的命令是 docker logs -f 容器名"}
+{"memory_id":"corpus-0057","kind":"preference","text":"用户的 Markdown 表格用 prettier 格式化对齐"}
+{"memory_id":"corpus-0058","kind":"profile","text":"用户所在时区是东八区，作息按北京时间"}
+{"memory_id":"corpus-0059","kind":"profile","text":"用户的生日是 3 月 14 日"}
+{"memory_id":"corpus-0060","kind":"profile","text":"用户的工位在 3 楼靠窗倒数第二个"}
+{"memory_id":"corpus-0061","kind":"reference","text":"公司的报销系统叫费控宝"}
+{"memory_id":"corpus-0062","kind":"profile","text":"用户的工号是 A1024"}
+{"memory_id":"corpus-0063","kind":"reference","text":"办公室的 Wi-Fi 密码写在会议室白板右下角"}
+{"memory_id":"corpus-0064","kind":"reference","text":"三楼打印机的名字是 3F-HP-01"}
+{"memory_id":"corpus-0065","kind":"profile","text":"用户的直属领导是陈工"}
+{"memory_id":"corpus-0066","kind":"episodic","text":"团队下午茶订奶茶时用户的默认口味是三分糖"}
+{"memory_id":"corpus-0067","kind":"profile","text":"用户的紧急联系人是配偶"}
+{"memory_id":"corpus-0068","kind":"profile","text":"用户的公积金账号绑定的手机号已经停用，需要更新成现在用的号码"}
+{"memory_id":"corpus-0069","kind":"profile","text":"用户去年体检发现轻度脂肪肝，医嘱是控制晚餐碳水并每周三次快走"}
+{"memory_id":"corpus-0070","kind":"profile","text":"用户家里的 NAS 是群晖 DS220+，两块 4TB 硬盘做 RAID1"}
+{"memory_id":"corpus-0071","kind":"preference","text":"用户出差住酒店只住无烟楼层的高层安静房间，要远离电梯"}
+{"memory_id":"corpus-0072","kind":"project","text":"memory 项目的性能验收脚本在 scripts 目录，用 python3 执行，参数是 --records 100000"}
+{"memory_id":"corpus-0073","kind":"preference","text":"用户周末带娃的固定安排是周六上午钢琴陪练、下午去公园，周日在家大扫除"}
+{"memory_id":"corpus-0074","kind":"decision","text":"团队决定代码评审必须两人批准后才能合并，线上紧急修复除外"}
+{"memory_id":"corpus-0075","kind":"profile","text":"用户的车是新能源牌照，充电桩装在地库 B2 层 086 号车位旁"}
+{"memory_id":"corpus-0076","kind":"preference","text":"用户冬天在办公室常备一条毯子和一个暖手宝"}
+{"memory_id":"corpus-0077","kind":"reference","text":"用户前年办的健身卡已过期，卡里还剩 12 次私教课没约"}
+{"memory_id":"corpus-0078","kind":"project","text":"基准测试报告统一放到 docs 目录，命名格式是日期加主题"}
+{"memory_id":"corpus-0079","kind":"preference","text":"用户要求线上问题的复盘会必须在事后 48 小时内开完并出纪要"}
+{"memory_id":"corpus-0080","kind":"profile","text":"用户老家在四川绵阳，春节一般回去一周"}
+{"memory_id":"corpus-0081","kind":"preference","text":"用户的台式机专门用来跑深度学习训练，显卡是 4090"}
+{"memory_id":"corpus-0082","kind":"preference","text":"用户深夜工作只开一盏 2700K 色温的暖光台灯"}
+{"memory_id":"corpus-0083","kind":"project","text":"memory 项目是用 Rust 开发的"}
+{"memory_id":"corpus-0084","kind":"decision","text":"团队规定内部文档一律用简体中文撰写"}
+{"memory_id":"corpus-0085","kind":"preference","text":"后端单元测试框架用的是 pytest"}
+{"memory_id":"corpus-0086","kind":"profile","text":"用户家里养了一只橘猫，名字叫糯米"}
+{"memory_id":"corpus-0087","kind":"profile","text":"用户的手机是黑色的 Pixel"}
+{"memory_id":"corpus-0088","kind":"decision","text":"周报的截止时间是周四下班前"}
+{"memory_id":"corpus-0089","kind":"preference","text":"用户跑步时戴的耳机是骨传导的"}
+{"memory_id":"corpus-0090","kind":"preference","text":"用户工作日早餐一般是豆浆加全麦面包"}
+{"memory_id":"corpus-0091","kind":"project","text":"生产环境统一安装 Ubuntu 22.04"}
+{"memory_id":"corpus-0092","kind":"preference","text":"用户写代码用的字体是 JetBrains Mono"}
+{"memory_id":"corpus-0093","kind":"decision","text":"数据库备份保留 30 天，之后归档到冷存储"}
+{"memory_id":"corpus-0094","kind":"preference","text":"用户做技术分享喜欢用白板现场画图，而不是放 PPT"}
+{"memory_id":"corpus-0095","kind":"profile","text":"用户眼睛有点散光，配了防蓝光眼镜"}
+{"memory_id":"corpus-0096","kind":"project","text":"发版的版本号规则是语义化版本加日期后缀"}
+{"memory_id":"corpus-0097","kind":"preference","text":"用户出去旅游喜欢住民宿而不是连锁酒店"}
+{"memory_id":"corpus-0098","kind":"profile","text":"用户的血型是 O 型"}
+{"memory_id":"corpus-0099","kind":"preference","text":"用户网购的收货地址默认填公司前台"}
+{"memory_id":"corpus-0100","kind":"reference","text":"用户的高速公路 ETC 绑定的是招商银行的卡"}
+{"memory_id":"corpus-0101","kind":"preference","text":"用户的笔记本电脑用于日常写代码和开会，不做训练任务"}
+{"memory_id":"corpus-0102","kind":"preference","text":"用户家客厅的主灯是冷白光 LED 吸顶灯"}
+{"memory_id":"corpus-0103","kind":"project","text":"runtime 项目的主要开发语言是 Python"}
+{"memory_id":"corpus-0104","kind":"decision","text":"对外发布的 API 文档必须用英文撰写"}
+{"memory_id":"corpus-0105","kind":"project","text":"前端仓库的单元测试用的是 vitest"}
+{"memory_id":"corpus-0106","kind":"episodic","text":"公司楼下常驻一只流浪的狸花猫，同事偶尔喂它"}
+{"memory_id":"corpus-0107","kind":"profile","text":"用户的平板是银色的 iPad"}
+{"memory_id":"corpus-0108","kind":"decision","text":"月报的截止时间是每月最后一个工作日"}
+{"memory_id":"corpus-0109","kind":"preference","text":"用户在办公室用的降噪耳机是索尼 WH-1000XM5"}
+{"memory_id":"corpus-0110","kind":"episodic","text":"用户周末早餐会给自己做煎蛋和培根"}
+{"memory_id":"corpus-0111","kind":"project","text":"内部网关项目 gateway 目前处于维护状态，负责人是老王"}
+{"memory_id":"corpus-0112","kind":"project","text":"消息推送服务 push-svc 上周刚发了 2.3.0 版本"}
+{"memory_id":"corpus-0113","kind":"project","text":"日志平台 loghouse 的查询入口在内部域名 logs.internal"}
+{"memory_id":"corpus-0114","kind":"project","text":"鉴权服务 auth-center 计划下季度迁移到新框架"}
+{"memory_id":"corpus-0115","kind":"project","text":"配置中心 apollo-adapter 的文档由测试组维护"}
+{"memory_id":"corpus-0116","kind":"project","text":"移动端 App 的壳工程仓库叫 mobile-shell"}
+{"memory_id":"corpus-0117","kind":"project","text":"数据看板 dashboard 后端用的是 Go 语言"}
+{"memory_id":"corpus-0118","kind":"project","text":"客服工单系统 ticket 的年初目标是从 PHP 迁移出去"}
+{"memory_id":"corpus-0119","kind":"project","text":"风控引擎 risk-engine 每天凌晨跑全量离线计算"}
+{"memory_id":"corpus-0120","kind":"project","text":"内部文档站 docs-site 使用 MkDocs 搭建"}
+{"memory_id":"corpus-0121","kind":"project","text":"监控告警平台 alert-hub 的值班表每周轮换一次"}
+{"memory_id":"corpus-0122","kind":"project","text":"对象存储封装 storage-sdk 提供了 Python 和 Go 两种客户端"}
+{"memory_id":"corpus-0123","kind":"project","text":"任务调度器 scheduler 支持 cron 和一次性延迟任务"}
+{"memory_id":"corpus-0124","kind":"project","text":"搜索服务 search-svc 的索引分片数是 8"}
+{"memory_id":"corpus-0125","kind":"project","text":"支付网关 pay-gateway 的对账任务跑在独立的凌晨队列"}
+{"memory_id":"corpus-0126","kind":"project","text":"用户中心 user-center 的手机号换绑流程要走短信验证"}
+{"memory_id":"corpus-0127","kind":"project","text":"内容审核服务 moderation 的申诉入口在 App 设置里"}
+{"memory_id":"corpus-0128","kind":"project","text":"内部 CLI 工具 bbctl 的插件机制支持热加载"}
+{"memory_id":"corpus-0129","kind":"project","text":"测试环境的数据库每天凌晨两点重置为基线快照"}
+{"memory_id":"corpus-0130","kind":"project","text":"bi 报表平台 metabase 的账号需要找 IT 单独开通"}
+{"memory_id":"corpus-0131","kind":"project","text":"A/B 实验平台 abtest 的分流键默认用设备号"}
+{"memory_id":"corpus-0132","kind":"project","text":"短信通道 sms-broker 有主备两家供应商"}
+{"memory_id":"corpus-0133","kind":"project","text":"地图服务 map-svc 的离线包每月更新一次"}
+{"memory_id":"corpus-0134","kind":"project","text":"推荐系统 rec-sys 的特征仓库在离线集群上"}
+{"memory_id":"corpus-0135","kind":"project","text":"发布系统 deploy-bot 接入了企业微信审批流"}
+{"memory_id":"corpus-0136","kind":"project","text":"混沌工程平台 chaos 的故障注入只允许在工作时段执行"}
+{"memory_id":"corpus-0137","kind":"project","text":"代码质量平台 sonar 的门禁规则由架构组制定"}
+{"memory_id":"corpus-0138","kind":"project","text":"静态资源 CDN 的缓存策略是七天过期"}
+{"memory_id":"corpus-0139","kind":"project","text":"消息队列用的 RocketMQ，命名规范是环境加业务域"}
+{"memory_id":"corpus-0140","kind":"project","text":"灰度发布平台的百分比放量步长默认是 5"}
+{"memory_id":"corpus-0141","kind":"project","text":"内部漏洞扫描器 vuln-scanner 每周一早上出周报"}
+{"memory_id":"corpus-0142","kind":"project","text":"API 网关的限流默认阈值是每秒一千次"}
+{"memory_id":"corpus-0143","kind":"project","text":"数据库审计平台 db-audit 记录保留一年"}
+{"memory_id":"corpus-0144","kind":"project","text":"备份校验任务每周六跑一次全量比对"}
+{"memory_id":"corpus-0145","kind":"project","text":"测试机房的 Ubuntu 24.04 虚拟机模板叫 noble-base"}
+{"memory_id":"corpus-0146","kind":"project","text":"开发容器镜像统一基于 Debian 12 构建"}
+{"memory_id":"corpus-0147","kind":"reference","text":"查域名解析的命令是 dig 加域名加 any"}
+{"memory_id":"corpus-0148","kind":"reference","text":"看端口占用的命令是 ss -tlnp"}
+{"memory_id":"corpus-0149","kind":"reference","text":"抓包分析的命令模板是 tcpdump -i any -w 包文件"}
+{"memory_id":"corpus-0150","kind":"reference","text":"批量重命名文件的脚本在个人仓库的 utils 目录"}
+{"memory_id":"corpus-0151","kind":"reference","text":"正则表达式速查表保存在浏览器的书签文件夹 tools 里"}
+{"memory_id":"corpus-0152","kind":"reference","text":"内部知识库的入口域名是 wiki.internal"}
+{"memory_id":"corpus-0153","kind":"reference","text":"VPN 客户端的下载地址在 IT 服务台的置顶帖"}
+{"memory_id":"corpus-0154","kind":"reference","text":"报销发票的抬头信息存在手机备忘录的第一条"}
+{"memory_id":"corpus-0155","kind":"reference","text":"常用面试题库的在线表格链接在个人收藏里"}
+{"memory_id":"corpus-0156","kind":"reference","text":"家里的宽带是电信 500M，光猫在电视柜第二层"}
+{"memory_id":"corpus-0157","kind":"reference","text":"路由器管理后台的密码保存在密码管理器的 wifi 分组"}
+{"memory_id":"corpus-0158","kind":"reference","text":"小区门禁的访客密码每月一号在业主群公布"}
+{"memory_id":"corpus-0159","kind":"reference","text":"常用的正则在线测试网站是 regex101"}
+{"memory_id":"corpus-0160","kind":"reference","text":"色彩取色工具用的是系统自带的 gpick 替代品"}
+{"memory_id":"corpus-0161","kind":"reference","text":"二楼的共享会议室预约要用日历系统的会议室视图"}
+{"memory_id":"corpus-0162","kind":"reference","text":"公司班车的时刻表贴在一楼大厅公告栏"}
+{"memory_id":"corpus-0163","kind":"reference","text":"固定资产标签的补办流程在行政的在线文档里"}
+{"memory_id":"corpus-0164","kind":"reference","text":"入职材料补交的收件邮箱是 hr 的公共邮箱"}
+{"memory_id":"corpus-0165","kind":"reference","text":"内部证书的申请入口在运维平台 cert 模块"}
+{"memory_id":"corpus-0166","kind":"reference","text":"Mysql 慢查询日志的位置在 /var/log/mysql/slow.log"}
+{"memory_id":"corpus-0167","kind":"reference","text":"性能分析火焰图的生成命令记在个人 wiki 的 perf 页面"}
+{"memory_id":"corpus-0168","kind":"reference","text":"办公椅报修要填 IT 工单并注明工位号"}
+{"memory_id":"corpus-0169","kind":"reference","text":"差旅标准表:一线城市酒店上限五百元一晚"}
+{"memory_id":"corpus-0170","kind":"reference","text":"加油卡是中石化的，放在车里扶手箱"}
+{"memory_id":"corpus-0171","kind":"reference","text":"家庭住址在朝阳区的老小区，收快递要写驿站编号"}
+{"memory_id":"corpus-0172","kind":"reference","text":"git tag 的命名规范是 v 前缀加三段版本号"}
+{"memory_id":"corpus-0173","kind":"reference","text":"系统日志默认保留 7 天自动滚动"}
+{"memory_id":"corpus-0174","kind":"reference","text":"监控指标的原始数据保留 90 天"}
+{"memory_id":"corpus-0175","kind":"reference","text":"团队 PPT 模板在共享盘的 brand 目录下"}
+{"memory_id":"corpus-0176","kind":"fact","text":"公司全员大会在每个季度首月的第一个周五"}
+{"memory_id":"corpus-0177","kind":"fact","text":"研发部在 3 号楼的 4 层和 5 层"}
+{"memory_id":"corpus-0178","kind":"fact","text":"公司食堂中午 11 点半开餐，一楼是面食窗口"}
+{"memory_id":"corpus-0179","kind":"fact","text":"行政的下午茶福利是每周三发放"}
+{"memory_id":"corpus-0180","kind":"fact","text":"上一年度的公司体检合作机构是美年大健康"}
+{"memory_id":"corpus-0181","kind":"fact","text":"年假需要在次年三月底前休完"}
+{"memory_id":"corpus-0182","kind":"fact","text":"公司注册地的园区地铁站在 2 号线沿线"}
+{"memory_id":"corpus-0183","kind":"fact","text":"值班室的分机号是 8888，7x24 有人"}
+{"memory_id":"corpus-0184","kind":"fact","text":"新员工的导师制周期是三个月"}
+{"memory_id":"corpus-0185","kind":"fact","text":"专利申请的内部流程要先过知识产权委员会评审"}
+{"memory_id":"corpus-0186","kind":"fact","text":"公司的财年从每年四月开始"}
+{"memory_id":"corpus-0187","kind":"fact","text":"内部邮箱的后缀是 example-corp.cn"}
+{"memory_id":"corpus-0188","kind":"fact","text":"楼下的便利店早上七点开门"}
+{"memory_id":"corpus-0189","kind":"fact","text":"停车场的访客车位在地面 B 区"}
+{"memory_id":"corpus-0190","kind":"fact","text":"公司吉祥物是一只黄色的鸭子"}
+{"memory_id":"corpus-0191","kind":"fact","text":"上次全公司停电演练是在六月"}
+{"memory_id":"corpus-0192","kind":"fact","text":"体检报告显示血常规各项正常"}
+{"memory_id":"corpus-0193","kind":"fact","text":"上次献血因为转氨酶偏高没有献成"}
+{"memory_id":"corpus-0194","kind":"fact","text":"驾照是 C1，明年 8 月换证"}
+{"memory_id":"corpus-0195","kind":"fact","text":"身份证的有效期到 2035 年"}
+{"memory_id":"corpus-0196","kind":"fact","text":"护照还有三年多有效期，免签去过新加坡"}
+{"memory_id":"corpus-0197","kind":"fact","text":"老家的高铁站去年刚通车站"}
+{"memory_id":"corpus-0198","kind":"fact","text":"配偶的工作是中学老师"}
+{"memory_id":"corpus-0199","kind":"fact","text":"父亲的退休前职业是机床厂技工"}
+{"memory_id":"corpus-0200","kind":"fact","text":"家里新房的钥匙备用一把在物业"}
+{"memory_id":"corpus-0201","kind":"fact","text":"小区的快递驿站晚上十点关门"}
+{"memory_id":"corpus-0202","kind":"fact","text":"户口本放在老家父母家的抽屉里"}
+{"memory_id":"corpus-0203","kind":"fact","text":"婚礼纪念日是 10 月 2 日"}
+{"memory_id":"corpus-0204","kind":"fact","text":"女儿的班主任姓刘"}
+{"memory_id":"corpus-0205","kind":"fact","text":"家里装的是中央空调加地暖的组合"}
+{"memory_id":"corpus-0206","kind":"preference","text":"用户看小说只在微信读书上看"}
+{"memory_id":"corpus-0207","kind":"preference","text":"用户的听歌软件是网易云音乐，歌单按心情分类"}
+{"memory_id":"corpus-0208","kind":"preference","text":"用户打游戏只玩单机，不碰网游"}
+{"memory_id":"corpus-0209","kind":"preference","text":"用户拍照习惯用 3:4 比例而不是全屏"}
+{"memory_id":"corpus-0210","kind":"preference","text":"用户的输入法是搜狗，关掉了云联想"}
+{"memory_id":"corpus-0211","kind":"preference","text":"用户手机桌面只留一屏应用，其余收进抽屉"}
+{"memory_id":"corpus-0212","kind":"preference","text":"用户看剧倍速习惯 1.25，太快的听不清"}
+{"memory_id":"corpus-0213","kind":"preference","text":"用户喝水只喝常温的，不喝冰水"}
+{"memory_id":"corpus-0214","kind":"preference","text":"用户点外卖默认备注不要香菜"}
+{"memory_id":"corpus-0215","kind":"preference","text":"用户的运动手环表盘是极简数字风"}
+{"memory_id":"corpus-0216","kind":"preference","text":"用户的浏览器主页设置成空白页"}
+{"memory_id":"corpus-0217","kind":"preference","text":"用户写文档不喜欢用表情符号"}
+{"memory_id":"corpus-0218","kind":"preference","text":"用户开会喜欢站着开短会，超过半小时才坐下"}
+{"memory_id":"corpus-0219","kind":"preference","text":"用户试衣服只买合身的修身版型"}
+{"memory_id":"corpus-0220","kind":"preference","text":"用户的理发周期是一个月一次，固定找同一位师傅"}
+{"memory_id":"corpus-0221","kind":"preference","text":"用户的车机导航默认避开收费路段"}
+{"memory_id":"corpus-0222","kind":"preference","text":"用户加油只加 95 号"}
+{"memory_id":"corpus-0223","kind":"preference","text":"用户的终端字体用 Sarasa Mono SC，字号 12"}
+{"memory_id":"corpus-0224","kind":"preference","text":"用户的窗口管理器平铺布局是主副栈式"}
+{"memory_id":"corpus-0225","kind":"preference","text":"用户看技术周刊的习惯是周日晚上一次性读完"}
+{"memory_id":"corpus-0226","kind":"preference","text":"用户的待办清单按今天、本周、以后三档分"}
+{"memory_id":"corpus-0227","kind":"preference","text":"用户的邮件签名只有名字和电话，不带头衔"}
+{"memory_id":"corpus-0228","kind":"preference","text":"用户提交代码的 commit 信息用中文写"}
+{"memory_id":"corpus-0229","kind":"preference","text":"用户的分屏习惯是左边代码右边终端"}
+{"memory_id":"corpus-0230","kind":"preference","text":"用户的手机主题永远是浅色，觉得深色费电又看不清"}
+{"memory_id":"corpus-0231","kind":"preference","text":"用户午休一定要眯二十分钟，戴蒸汽眼罩"}
+{"memory_id":"corpus-0232","kind":"preference","text":"用户的桌面图标排序按使用频率手动排"}
+{"memory_id":"corpus-0233","kind":"preference","text":"用户的Kindle 刷书频率是一月两本"}
+{"memory_id":"corpus-0234","kind":"preference","text":"用户停车永远倒车入位"}
+{"memory_id":"corpus-0235","kind":"preference","text":"用户的信用卡还款日设在发薪日之后两天"}
+{"memory_id":"corpus-0236","kind":"preference","text":"用户记账用随手记，月底对一次账"}
+{"memory_id":"corpus-0237","kind":"preference","text":"用户买书只买纸质的，电子版用来试读"}
+{"memory_id":"corpus-0238","kind":"preference","text":"用户的键盘快捷键习惯禁用大小写切换键"}
+{"memory_id":"corpus-0239","kind":"preference","text":"用户的浏览器装了广告过滤插件"}
+{"memory_id":"corpus-0240","kind":"preference","text":"用户的闹钟只设一个，靠生物钟起来"}
+{"memory_id":"corpus-0241","kind":"episodic","text":"上个月参加了公司组织的急救培训并拿了证书"}
+{"memory_id":"corpus-0242","kind":"episodic","text":"去年团建去了坝上草原，用户因为怕晒全程待在室内"}
+{"memory_id":"corpus-0243","kind":"episodic","text":"上周五和大学同学聚了一次，聊到转行做独立的想法"}
+{"memory_id":"corpus-0244","kind":"episodic","text":"去年双十一囤了两箱咖啡豆，到现在还没喝完"}
+{"memory_id":"corpus-0245","kind":"episodic","text":"上季度绩效面谈领导肯定了重构方案的落地"}
+{"memory_id":"corpus-0246","kind":"episodic","text":"上个月升级了家里的软路由系统，断网折腾到半夜"}
+{"memory_id":"corpus-0247","kind":"episodic","text":"年初把老家的台式机远程给父母装了远程协助"}
+{"memory_id":"corpus-0248","kind":"episodic","text":"五一假期去了泉州，对蟳埔簪花印象深刻"}
+{"memory_id":"corpus-0249","kind":"episodic","text":"上次部门聚餐吃的日料，用户只吃了熟食"}
+{"memory_id":"corpus-0250","kind":"episodic","text":"上个月把手环丢在了出租车上，后来找回来了"}
+{"memory_id":"corpus-0251","kind":"episodic","text":"去年冬天参加了线上的 Rust 共学营"}
+{"memory_id":"corpus-0252","kind":"episodic","text":"上周帮邻居修好了路由器的信道冲突问题"}
+{"memory_id":"corpus-0253","kind":"episodic","text":"上月在小区业主群当了一次志愿者统计车牌"}
+{"memory_id":"corpus-0254","kind":"episodic","text":"去年公司黑客马拉松拿了二等奖，作品是智能台灯"}
+{"memory_id":"corpus-0255","kind":"episodic","text":"上次打车遇到绕路，投诉后退了差价"}
+{"memory_id":"corpus-0256","kind":"episodic","text":"上季度把私人相册从某云盘迁到了自建 NAS"}
+{"memory_id":"corpus-0257","kind":"episodic","text":"去年体检加了幽门螺旋杆菌检测，结果是阴性"}
+{"memory_id":"corpus-0258","kind":"episodic","text":"上月给女儿的学校科技节当了志愿讲师"}
+{"memory_id":"corpus-0259","kind":"episodic","text":"上周把书房的灯换成了护眼吸顶灯"}
+{"memory_id":"corpus-0260","kind":"episodic","text":"去年双十一给父母换了大屏手机并教会了视频通话"}
+{"memory_id":"corpus-0261","kind":"decision","text":"团队决定周会不再逐人念进度，改为文档异步同步"}
+{"memory_id":"corpus-0262","kind":"decision","text":"决定把个人知识库从 Notion 迁到 Obsidian，因为要本地化"}
+{"memory_id":"corpus-0263","kind":"decision","text":"团队决定新服务一律上容器化部署"}
+{"memory_id":"corpus-0264","kind":"decision","text":"决定家里的智能设备不再买不同生态的，统一米家"}
+{"memory_id":"corpus-0265","kind":"decision","text":"团队决定不再维护 v1 版本的 SDK，全面切 v2"}
+{"memory_id":"corpus-0266","kind":"decision","text":"决定学习路线先深耕 Rust 再看嵌入式"}
+{"memory_id":"corpus-0267","kind":"decision","text":"团队决定代码规范检查用 rustfmt 加 clippy 双工具"}
+{"memory_id":"corpus-0268","kind":"decision","text":"决定每年固定拿一个月薪水的比例买指数基金"}
+{"memory_id":"corpus-0269","kind":"decision","text":"团队决定值班交接必须在系统里留交接单"}
+{"memory_id":"corpus-0270","kind":"decision","text":"决定家里的电视不装任何会员，只看本地资源"}
+{"memory_id":"corpus-0271","kind":"decision","text":"团队决定缺陷等级里数据丢失一律定为最高级"}
+{"memory_id":"corpus-0272","kind":"decision","text":"决定个人项目一律用 MIT 协议开源"}
+{"memory_id":"corpus-0273","kind":"decision","text":"团队决定接口设计评审提前到提测之前"}
+{"memory_id":"corpus-0274","kind":"decision","text":"决定给父母的老房子装监控摄像头看安全"}
+{"memory_id":"corpus-0275","kind":"decision","text":"团队决定测试环境的域名统一加 test 前缀"}
+{"memory_id":"corpus-0276","kind":"decision","text":"决定女儿的零花钱按周发，做家务有加成"}
+{"memory_id":"corpus-0277","kind":"decision","text":"团队决定产线变更窗口定在每周三凌晨"}
+{"memory_id":"corpus-0278","kind":"decision","text":"决定换车预算上限三十万，优先考虑续航"}
+{"memory_id":"corpus-0279","kind":"decision","text":"团队决定文档评审引入互查积分制"}
+{"memory_id":"corpus-0280","kind":"decision","text":"决定书房的显示器从双屏换成带鱼屏"}
+{"memory_id":"corpus-0281","kind":"profile","text":"用户的身高是 175 厘米，体重常年 68 公斤"}
+{"memory_id":"corpus-0282","kind":"profile","text":"用户的本科专业是自动化，研究生转了计算机"}
+{"memory_id":"corpus-0283","kind":"profile","text":"用户的第一份工作在一家外企做测试开发"}
+{"memory_id":"corpus-0284","kind":"profile","text":"用户的英文名字叫 Leo"}
+{"memory_id":"corpus-0285","kind":"profile","text":"用户左撇子，吃饭用左手拿筷子"}
+{"memory_id":"corpus-0286","kind":"profile","text":"用户有色弱，红绿灯靠位置判断"}
+{"memory_id":"corpus-0287","kind":"profile","text":"用户不晕车但晕船，坐船必吃晕船药"}
+{"memory_id":"corpus-0288","kind":"profile","text":"用户的鞋码是 42 码"}
+{"memory_id":"corpus-0289","kind":"profile","text":"用户戴的手表是卡西欧的小方块"}
+{"memory_id":"corpus-0290","kind":"profile","text":"用户的母校校训里有知行两个字"}
+{"memory_id":"corpus-0291","kind":"profile","text":"用户会一点日语，五十音图级别的水平"}
+{"memory_id":"corpus-0292","kind":"profile","text":"用户的普通话考过二级甲等"}
+{"memory_id":"corpus-0293","kind":"profile","text":"用户的近视度数双眼都是五百度"}
+{"memory_id":"corpus-0294","kind":"profile","text":"用户属相是兔，生日在春天"}
+{"memory_id":"corpus-0295","kind":"profile","text":"用户的工位绿植是一盆虎皮兰，浇水周期两周"}
+{"memory_id":"corpus-0296","kind":"profile","text":"用户的家乡话是西南官话"}
+{"memory_id":"corpus-0297","kind":"profile","text":"用户的本命游戏是塞尔达系列，全通三次"}
+{"memory_id":"corpus-0298","kind":"profile","text":"用户会做一手好川菜里的回锅肉，虽然自己不吃辣"}
+{"memory_id":"corpus-0299","kind":"profile","text":"用户的高中母校百年校庆在 2028 年"}
+{"memory_id":"corpus-0300","kind":"profile","text":"用户的个人博客域名已经续费到 2030 年"}

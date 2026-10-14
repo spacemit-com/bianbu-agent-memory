@@ -1,0 +1,52 @@
+bianbu-agent-memory for Bianbu Agent
+====================================
+
+The packages install the Rust daemon at /usr/libexec/bianbu-agent-memoryd, the
+Python client as bianbu-agent-memory, and the systemd unit
+bianbu-agent-memoryd.service. Installing the Memory package pulls in the matching
+daemon package. Installation creates protected account/capsule secrets and an
+encrypted database key package, verifies that the SDK is importable, enables
+the unit, and starts the daemon. The Runtime user is added to the bianbu-agent
+group and registers its PID-bound identity under
+/run/bianbu/agent-runtime/memory-registry.
+
+The tmpfiles configuration adds narrow POSIX ACL entries for the Runtime,
+Memory, and Security service users on /run/bianbu. Security may create this
+shared IPC root with restrictive ownership before memoryd starts; the ACLs keep
+the memory socket and Runtime registry reachable without changing the Security
+directory owner.
+
+Embedding model (spacemit-ai-gateway)
+-------------------------------------
+Semantic indexing no longer runs an inference process owned by this package.
+memoryd consumes the Embed domain of the spacemit-ai-gateway on
+127.0.0.1:18790, which owns the embedding model's download, load and inference
+lifecycle. This package therefore ships no model downloader and no
+llama-server unit; it only enables the one-shot
+bianbu-agent-memory-embedding-provision.service, which makes the
+Qwen3-Embedding-0.6B Q8_0 preset available.
+
+The provisioner is harmless on a device without the gateway: it logs and exits
+successfully, and memoryd keeps its FTS5 fallback, so an absent gateway or
+model costs nothing. Because the gateway's embed.backend and
+embed.default_args are shared with the Agent OS intent module, the model is
+loaded with pinned start-up arguments instead of those defaults; see
+GATEWAY_EMBEDDING_INTEGRATION.md for the reasoning and the evidence. Since
+0.1.9 semantic indexing is enabled by default (daemon configs without an
+embedding section activate it on upgrade); the settings-page toggle turns it
+off, and AGENT_MEMORY_EMBEDDING_DISABLED=1 in the daemon environment suppresses
+only the out-of-the-box default. Manual provisioning:
+systemctl restart bianbu-agent-memory-embedding-provision.service.
+
+Upgrading from a version that ran its own inference server leaves
+/var/lib/bianbu-agent-memory/models/ and /etc/bianbu-agent-memory/embedding.env
+behind. Both are unused now, and the package deliberately does not delete them;
+they can be removed once the gateway's own copy of the model has been verified.
+
+The bianbu-agent-memory package is a client library and does not run as a separate daemon. The
+bianbu-agent-memoryd.service is the companion service started by package
+installation.
+
+For a local K3 development stack, start the daemon explicitly with
+--development-identity and a private state directory. Do not use that mode in
+the production image.

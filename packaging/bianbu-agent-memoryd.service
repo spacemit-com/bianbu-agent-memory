@@ -1,0 +1,56 @@
+[Unit]
+Description=Bianbu Agent Memory Service
+# Semantic indexing is served by the spacemit-ai-gateway Embed domain, which
+# bianbu-agent-memory-embedding-provision.service makes available.  That
+# provisioner is deliberately not ordered against this unit: it is a one-shot
+# job that may spend minutes downloading a ~640 MiB model on its very first run,
+# and memoryd degrades to lexical-only recall in the meantime, so waiting on it
+# would only delay the daemon's SQLite/FTS5 service.  Enabling it in the boot
+# transaction is enough; the daemon retries embedding in the background.
+# The D-Bus control plane is claimed at startup, so the bus should be up first.
+# Both dependencies stay soft: an image without a bus still starts the daemon,
+# which then reports the missing bus and keeps serving UDS.
+Wants=dbus.service
+After=local-fs.target systemd-tmpfiles-setup.service dbus.service
+
+[Service]
+Type=simple
+User=bianbu-memory
+Group=bianbu-agent
+SupplementaryGroups=bianbu
+# Security owns /run/bianbu and may tighten its ACL when Runtime restarts.
+# Restore only the narrow Memory access before starting the daemon.  This
+# pre-start hook is run as root; the daemon itself remains unprivileged.
+PermissionsStartOnly=true
+ExecStartPre=/usr/bin/setfacl -m u:bianbu-memory:rwx,m::rwx /run/bianbu
+ExecStartPre=/usr/bin/install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime
+ExecStartPre=/usr/bin/install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime/memory-registry
+EnvironmentFile=-/etc/bianbu-agent-memory/backup.env
+# 0750, not 0700: systemd re-enforces this mode on every start and would
+# otherwise override the postinst's 0750, locking the embedding unit
+# (User=bianbu, Group=bianbu-agent) out of the models/ path below. Sensitive
+# files inside (memory.db, memory.keypkg, capsules/) keep their own 0600/0700.
+StateDirectory=bianbu-agent-memory
+StateDirectoryMode=0750
+UMask=0007
+ExecStart=/usr/libexec/bianbu-agent-memoryd --socket /run/bianbu/agent-memoryd.sock --database /var/lib/bianbu-agent-memory/memory.db --runtime-registry-dir /run/bianbu/agent-runtime/memory-registry --key-package /var/lib/bianbu-agent-memory/memory.keypkg --account-secret-file /etc/bianbu-agent-memory/account-secret --backup-directory /var/lib/bianbu-agent-memory/capsules --capsule-key-file /etc/bianbu-agent-memory/capsule-key --adapter-confirmation-secret-file /etc/bianbu-agent-memory/adapter-confirmation.secret --background-device-id %m --background-interval-seconds 60 --dbus
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run/bianbu
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

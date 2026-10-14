@@ -1,0 +1,42 @@
+Source: bianbu-agent-memory
+Section: utils
+Priority: optional
+Maintainer: Bianbu Agent Team <bianbu-agent@spacemit.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo,
+ rustc,
+ libssl-dev,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: bianbu-agent-memoryd
+Architecture: any
+Depends:
+ adduser,
+ acl,
+ curl,
+ systemd,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Description: local authoritative memory daemon for Bianbu Agent
+ Rust UDS memory service providing durable L1, L2 and L3 Agent Memory
+ storage for the Bianbu Agent Runtime.
+
+Package: bianbu-agent-memory
+Architecture: all
+Depends:
+ bianbu-agent-memoryd (= ${binary:Version}),
+ python3 (>= 3.10),
+ acl,
+ systemd,
+ ${misc:Depends},
+Provides:
+ bianbu-agent-memory-sdk (= ${binary:Version}),
+Breaks:
+ bianbu-agent-memory-sdk (<< ${binary:Version}),
+Replaces:
+ bianbu-agent-memory-sdk (<< ${binary:Version}),
+Description: Bianbu Agent Memory SDK and command-line client
+ Local Unix-socket client and Runtime integration APIs for
+ bianbu-agent-memoryd.

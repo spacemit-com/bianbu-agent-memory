@@ -1,0 +1,159 @@
+#!/bin/sh
+set -e
+
+# Same chroot probe as the platform U-Boot packaging
+# (uboot debian/spacemit-boot-device.sh): a firmware image is built inside a
+# chroot where only root exists and the running host's /dev, /proc, /run and
+# systemd must not be touched. Returns 0 when running in a chroot.
+running_in_chroot() {
+    if [ "${SYSTEMD_IGNORE_CHROOT:-0}" = "1" ]; then
+        return 1
+    fi
+    if [ -e "/proc/1/root" ]; then
+        root_dev_ino=$(stat -c '%d:%i' / 2>/dev/null) || return 0
+        proc1_root_dev_ino=$(stat -L -c '%d:%i' /proc/1/root 2>/dev/null) || return 0
+        [ "$root_dev_ino" = "$proc1_root_dev_ino" ] && return 1 || return 0
+    fi
+    if [ ! -d "/proc" ] || [ ! -r "/proc/version" ]; then
+        [ "$$" = "1" ] && return 1 || return 0
+    fi
+    return 0
+}
+
+# 'bianbu' is the image's interactive account (uid/gid 1000); this package does
+# not own it and a firmware build chroot has not created it yet.
+group_exists() {
+    if command -v getent >/dev/null 2>&1; then
+        getent group "$1" >/dev/null 2>&1
+    else
+        grep -q "^$1:" /etc/group 2>/dev/null
+    fi
+}
+
+# A minimal chroot can expose no device nodes at all, so fall back to openssl
+# rather than aborting 'dpkg --configure' on a missing /dev/urandom.
+create_secret() {
+    if [ -s "$1" ]; then
+        return 0
+    fi
+    if [ -r /dev/urandom ]; then
+        dd if=/dev/urandom of="$1" bs=32 count=1 status=none
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl rand 32 >"$1"
+    else
+        echo "bianbu-agent-memoryd: no /dev/urandom and no openssl to create $1" >&2
+        return 1
+    fi
+}
+
+if [ "$1" = configure ]; then
+    addgroup --system bianbu-agent >/dev/null 2>&1 || true
+    adduser --system --ingroup bianbu-agent --no-create-home --home /var/lib/bianbu-agent-memory \
+        --shell /usr/sbin/nologin bianbu-memory >/dev/null 2>&1 || true
+    # 'bianbu' belongs to the image, not to this package: it does not exist yet
+    # inside a firmware build chroot, and creating a system group named 'bianbu'
+    # here would collide with the platform's own uid/gid choice. Join it only
+    # when it is present; the runtime units add the membership through
+    # SupplementaryGroups=bianbu.
+    if group_exists bianbu; then
+        adduser bianbu-memory bianbu >/dev/null 2>&1 || true
+    fi
+    # 0750 (not 0700): the embedding inference unit runs as the interactive
+    # platform user (the vendor SPERT NPU arbiter is single-uid) and must
+    # traverse this directory to reach models/. Sensitive files inside
+    # (memory.keypkg, memory.db) keep their own 0600/0700 restrictions.
+    install -d -o bianbu-memory -g bianbu-agent -m 0750 /var/lib/bianbu-agent-memory
+    # 0700 gives the owning group no access to capsules/ at all, so it does not
+    # have to be the platform group: use the package-owned group and keep the
+    # install independent of the platform account existing (build chroot).
+    install -d -o bianbu-memory -g bianbu-agent -m 0700 /var/lib/bianbu-agent-memory/capsules
+    install -d -o root -g bianbu-agent -m 0750 /etc/bianbu-agent-memory
+    umask 077
+    create_secret /etc/bianbu-agent-memory/account-secret
+    create_secret /etc/bianbu-agent-memory/capsule-key
+    create_secret /etc/bianbu-agent-memory/adapter-confirmation.secret
+    chown root:bianbu-agent /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/capsule-key /etc/bianbu-agent-memory/adapter-confirmation.secret
+    chmod 0640 /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/capsule-key /etc/bianbu-agent-memory/adapter-confirmation.secret
+    if [ ! -e /var/lib/bianbu-agent-memory/memory.keypkg ]; then
+        /usr/libexec/bianbu-agent-memoryd \
+            --runtime-registry-dir /run/bianbu/agent-runtime/memory-registry \
+            --key-package /var/lib/bianbu-agent-memory/memory.keypkg \
+            --account-secret-file /etc/bianbu-agent-memory/account-secret \
+            --initialize-key-package --initialize-only
+        chown bianbu-memory:bianbu-agent /var/lib/bianbu-agent-memory/memory.keypkg
+        chmod 0600 /var/lib/bianbu-agent-memory/memory.keypkg
+    fi
+    # /run/bianbu is runtime state: Security owns it on a live system and it is
+    # recreated on every boot by systemd-tmpfiles-setup.service plus the unit's
+    # ExecStartPre. Skip it while building an image, which also leaves a
+    # bind-mounted host /run untouched and avoids resolving the platform
+    # 'bianbu' user from the tmpfiles ACL line before it exists.
+    if ! running_in_chroot; then
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles --create /usr/lib/tmpfiles.d/bianbu-agent-memoryd.conf >/dev/null 2>&1 || true
+        fi
+    fi
+    # Embedding model provisioning belongs to the spacemit-ai-gateway now: the
+    # daemon consumes the Gateway's Embed domain and this package no longer
+    # ships an inference unit or a model downloader.  The provisioner unit is
+    # enabled unconditionally and is harmless without the gateway -- it logs and
+    # exits successfully -- so a gateway installed later is picked up on the
+    # next boot without touching this package again.  See
+    # docs/GATEWAY_EMBEDDING_INTEGRATION.md for why the model is loaded with
+    # pinned start-up arguments instead of the Gateway's shared embed defaults.
+    #
+    # /etc/bianbu-agent-memory/embedding.env was generated by earlier versions
+    # and is obsolete since 0.1.17; a file left by an older install is
+    # deliberately preserved rather than deleted.
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper unmask bianbu-agent-memory-embedding-provision.service >/dev/null || true
+        deb-systemd-helper enable bianbu-agent-memory-embedding-provision.service >/dev/null || true
+        # 0.1.16 and earlier shipped their own inference unit and enabled it at
+        # install time.  The unit file is not in this version any more, but the
+        # enablement symlink (and any mask) it created lives in /etc, outside
+        # dpkg's file list, so dpkg would leave it behind and systemd would
+        # report a dangling unit on every boot.  The unit is stopped by the
+        # previous version's own prerm, which dpkg runs before unpacking this
+        # one.
+        if [ ! -e /lib/systemd/system/bianbu-agent-memory-embedding.service ]; then
+            deb-systemd-helper purge bianbu-agent-memory-embedding.service >/dev/null 2>&1 || true
+        fi
+    fi
+    # Say out loud what that unit is for, in the same shape bibit-intent uses
+    # at install time: dpkg does not wait for the model, and recall keeps
+    # working (lexically) until the Gateway has one.  The provisioner logs the
+    # outcome -- including the verified model path -- to the journal.
+    echo "bianbu-agent-memoryd: model initialization runs asynchronously in bianbu-agent-memory-embedding-provision.service"
+    echo "bianbu-agent-memoryd: recall stays lexical until the Gateway has the embedding model"
+    # Kick the first provisioning off in the background.  --no-block matters:
+    # the first run may download ~640 MiB, and dpkg must not wait for that.
+    if ! running_in_chroot && command -v systemctl >/dev/null 2>&1; then
+        systemctl --no-block start bianbu-agent-memory-embedding-provision.service >/dev/null 2>&1 || true
+    fi
+    # Security may already own /run/bianbu and install a restrictive ACL
+    # mask. systemd-tmpfiles can reject that pre-existing parent as an unsafe
+    # transition, so establish the narrow shared paths explicitly too without
+    # changing ownership of Security's parent directory. Runtime-only, like the
+    # tmpfiles call above.
+    if ! running_in_chroot; then
+        install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime
+        install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime/memory-registry
+        if command -v setfacl >/dev/null 2>&1; then
+            setfacl -m u:bianbu-memory:rwx,m::rwx /run/bianbu || true
+        fi
+    fi
+    # Enablement stays unconditional: deb-systemd-helper writes the boot-time
+    # enablement into the image, and deb-systemd-invoke skips itself when
+    # systemd is not running (chroot).
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper unmask bianbu-agent-memoryd.service >/dev/null || true
+        deb-systemd-helper enable bianbu-agent-memoryd.service >/dev/null || true
+    fi
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        deb-systemd-invoke start bianbu-agent-memoryd.service >/dev/null 2>&1 || true
+    fi
+fi
+# Runtime registration is supplied by the system Runtime service; memoryd
+# can safely listen before that service is started.
+#DEBHELPER#
+exit 0

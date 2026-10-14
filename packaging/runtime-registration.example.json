@@ -1,0 +1,21 @@
+{
+  "uid": 1000,
+  "gid": 1000,
+  "pid_start_time_ticks": 123456,
+  "account_id": "account-example",
+  "device_id": "device-example",
+  "agent_id": "io.bianbu.example",
+  "agent_instance_id": "instance-example",
+  "memory_space_id": "space-example",
+  "capabilities": [
+    "memory.instruction.read",
+    "memory.instruction.write",
+    "memory.short_term.read",
+    "memory.short_term.write",
+    "memory.long_term.read",
+    "memory.long_term.write",
+    "memory.forget"
+  ],
+  "executable_path": "/opt/bianbu/agents/example/bin/agent",
+  "expires_at_ms": 1800000000000
+}

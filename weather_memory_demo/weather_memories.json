@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "description": "Weather demo memories with file provenance for Bianbu Agent Memory.",
+  "memories": [
+    {
+      "key": "weather-language-and-unit",
+      "kind": "preference",
+      "text": "用户查询天气时，默认使用中文回复，并使用摄氏度展示温度。",
+      "summary": "天气回复使用中文和摄氏度",
+      "tags": ["weather", "天气", "中文", "摄氏度"],
+      "confidence": 1.0
+    },
+    {
+      "key": "rain-gear-reminder",
+      "kind": "preference",
+      "text": "如果天气预报显示有雨、阵雨或降水概率较高，提醒用户携带雨具。",
+      "summary": "有雨时提醒携带雨具",
+      "tags": ["weather", "天气", "降雨", "雨具"],
+      "confidence": 1.0
+    }
+  ]
+}

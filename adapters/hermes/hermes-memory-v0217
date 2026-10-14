@@ -1,0 +1,7 @@
+#!/bin/sh
+# K3 development entry point. Preserves the historical Hermes profile.
+set -eu
+exec /home/example/projects/hermes-agent-base/.venv/bin/python \
+  /home/example/mem-gateway-build/scripts/hermes_memory_dev.py \
+  --hermes-source /home/example/projects/hermes-agent-memory-v0.21.7 \
+  --state-dir /home/example/.local/state/hermes-memory-v0217 -- "$@"

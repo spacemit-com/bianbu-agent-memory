@@ -1,0 +1,56 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    # Fail early if the files installed by this package cannot be imported by
+    # the system Python used by the Runtime package.
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import bianbu_agent_sdk.memory' >/dev/null
+    fi
+
+    # The MCP that talks to the daemon belongs to the Runtime plugin
+    # (bianbu.memory/mcps/memory/mcp.json, shipped by bianbu-agent-runtime).
+    # This package deliberately installs no per-user copy: the plugin entry and
+    # a hand-written manifest carry different ids and would both be loaded.
+    if [ -f /usr/share/bianbu-agent-runtime/plugins/bianbu.memory/mcps/memory/mcp.json ]; then
+        echo "bianbu-agent-memory: Runtime Memory Plugin ships this MCP; no per-user manifest is installed"
+    fi
+
+    # The public Memory package contains the SDK and command-line clients. Its
+    # companion daemon must be enabled and started after this package is configured.
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper unmask bianbu-agent-memoryd.service >/dev/null || true
+        deb-systemd-helper enable bianbu-agent-memoryd.service >/dev/null || true
+        deb-systemd-helper unmask bianbu-agent-memory-adapter.service >/dev/null || true
+        deb-systemd-helper enable bianbu-agent-memory-adapter.service >/dev/null || true
+    fi
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        deb-systemd-invoke start bianbu-agent-memoryd.service >/dev/null 2>&1 || true
+        deb-systemd-invoke start bianbu-agent-memory-adapter.service >/dev/null 2>&1 || true
+    fi
+
+    # systemd prefers a unit in /etc over the packaged one in /usr/lib, so a
+    # hand-copied unit from an earlier debugging session would keep the adapter
+    # bound to every interface despite the loopback default.  This script must
+    # never fail the install (nor touch /run while an image is being built), so
+    # the conflict is only reported; the packaged drop-in already forces the
+    # loopback bind at runtime.
+    if [ -e /etc/systemd/system/bianbu-agent-memoryd.service ]; then
+        printf '%s\n' \
+            "bianbu-agent-memory: warning: /etc/systemd/system/bianbu-agent-memoryd.service overrides the packaged unit." \
+            "  Remove it and run 'systemctl daemon-reload'; the shipped unit is what enables the D-Bus control plane." >&2
+    fi
+    if [ -e /etc/systemd/system/bianbu-agent-memory-adapter.service ]; then
+        printf '%s\n' \
+            "bianbu-agent-memory: warning: /etc/systemd/system/bianbu-agent-memory-adapter.service overrides the packaged unit." \
+            "  Remove it and run 'systemctl daemon-reload' so the shipped configuration is the only one in effect." >&2
+    fi
+    if grep -qs '0\.0\.0\.0' /etc/systemd/system/bianbu-agent-memory-adapter.service.d/*.conf; then
+        printf '%s\n' \
+            "bianbu-agent-memory: warning: an /etc drop-in under /etc/systemd/system/bianbu-agent-memory-adapter.service.d/" \
+            "  binds the adapter to 0.0.0.0; the HTTP endpoint authenticates nobody." >&2
+    fi
+fi
+
+#DEBHELPER#
+exit 0

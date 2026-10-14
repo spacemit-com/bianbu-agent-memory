@@ -1,0 +1,16 @@
+/target/
+*.db
+*.db-shm
+*.db-wal
+*.sock
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# K3 本机构建配置与编辑器备份（不入库）
+.cargo/
+.remote-sessions.rs
+
+# K3 现场验收证据（本地 JSON），不随源码入库；与 CI 模板里的 artifacts/ 产物路径无关
+artifacts/

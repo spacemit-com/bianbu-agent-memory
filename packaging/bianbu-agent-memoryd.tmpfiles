@@ -1,0 +1,8 @@
+# Runtime and memory share this host IPC root.  Keep the parent ownership
+# selected by Security when it is already installed; the ACL is additive and
+# also makes a standalone Memory installation usable.  The Security user is
+# intentionally not listed: when Security owns the directory it already has
+# the owner permissions, and when it is absent its account need not exist.
+a+ /run/bianbu - - - - u:bianbu:rwx,u:bianbu-memory:rwx,m::rwx
+d /run/bianbu/agent-runtime 2770 root bianbu-agent -
+d /run/bianbu/agent-runtime/memory-registry 2770 root bianbu-agent -

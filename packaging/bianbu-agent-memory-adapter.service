@@ -1,0 +1,31 @@
+[Unit]
+Description=Bianbu Agent Memory BiBit service adapter
+Requires=bianbu-agent-memoryd.service
+After=bianbu-agent-memoryd.service
+
+[Service]
+Type=simple
+User=bianbu
+Group=bianbu-agent
+SupplementaryGroups=bianbu
+EnvironmentFile=-/etc/bianbu-agent-memory/adapter.env
+ExecStart=/usr/bin/bianbu-agent-memory-adapter --socket /run/bianbu/agent-memoryd.sock --registry-dir /run/bianbu/agent-runtime/memory-registry --secret-file /etc/bianbu-agent-memory/adapter-confirmation.secret --host 127.0.0.1 --port 5168
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/bianbu/agent-runtime/memory-registry
+MemoryHigh=64M
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

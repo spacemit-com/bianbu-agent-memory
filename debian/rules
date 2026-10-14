@@ -1,0 +1,52 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --workspace --release --locked
+	# Also run here: dh_auto_test is omitted entirely when the environment sets
+	# DEB_BUILD_OPTIONS=nocheck, and this check must not be skippable.
+	debian/tests/validate-package-metadata.sh
+
+override_dh_auto_test:
+	# AGENT_MEMORY_EMBEDDING_DISABLED=1 is the documented hermetic mode (see
+	# docs/TEST_CASES.md VEC-01 and the Default impl of EmbeddingConfig): without
+	# it the shipped embedding default points at a real endpoint, so a test that
+	# does not stub one out would assert against whatever the build host happens
+	# to be running. Every embedding test that cares sets its own configuration.
+	# Note that the Ubuntu dpkg vendor hook sets nocheck on riscv64, so dh skips
+	# this target in the device/CI package build; the variable still keeps an
+	# explicit `DEB_BUILD_OPTIONS= dpkg-buildpackage` or a manual rules run
+	# deterministic instead of coupling it to the host.
+	AGENT_MEMORY_EMBEDDING_DISABLED=1 cargo test --workspace --locked
+	debian/tests/validate-package-metadata.sh
+
+override_dh_auto_install:
+	chmod 0755 debian/bianbu-agent-memory.postinst
+	chmod 0755 packaging/bianbu-agent-memory-adapter
+	install -D -m 0755 target/release/bianbu-agent-memoryd debian/bianbu-agent-memoryd/usr/libexec/bianbu-agent-memoryd
+	install -D -m 0644 packaging/bianbu-agent-memoryd.service debian/bianbu-agent-memoryd/lib/systemd/system/bianbu-agent-memoryd.service
+	install -D -m 0644 packaging/bianbu-agent-memory-embedding-provision.service debian/bianbu-agent-memoryd/lib/systemd/system/bianbu-agent-memory-embedding-provision.service
+	install -D -m 0755 packaging/bianbu-agent-memory-embedding-provision debian/bianbu-agent-memoryd/usr/libexec/bianbu-agent-memory-embedding-provision
+	install -D -m 0644 tests/data/embedding_parity_golden.json debian/bianbu-agent-memoryd/usr/share/bianbu-agent-memoryd/embedding_parity_golden.json
+	install -D -m 0644 README.md debian/bianbu-agent-memoryd/usr/share/doc/bianbu-agent-memoryd/README.md
+	install -D -m 0644 docs/GATEWAY_EMBEDDING_INTEGRATION.md debian/bianbu-agent-memoryd/usr/share/doc/bianbu-agent-memoryd/GATEWAY_EMBEDDING_INTEGRATION.md
+	install -D -m 0644 packaging/bianbu-agent-memoryd.tmpfiles debian/bianbu-agent-memoryd/usr/lib/tmpfiles.d/bianbu-agent-memoryd.conf
+	install -D -m 0644 packaging/com.bianbu.AgentMemory1.conf debian/bianbu-agent-memoryd/usr/share/dbus-1/system.d/com.bianbu.AgentMemory1.conf
+	install -d -m 0755 debian/bianbu-agent-memory/usr/lib/python3/dist-packages
+	cp -a sdk/python/src/bianbu_agent_sdk debian/bianbu-agent-memory/usr/lib/python3/dist-packages/
+	find debian/bianbu-agent-memory/usr/lib/python3/dist-packages -type d -name __pycache__ -prune -exec rm -rf '{}' +
+	install -d -m 0755 debian/bianbu-agent-memory/usr/bin
+	install -m 0755 packaging/bianbu-agent-memory-cli debian/bianbu-agent-memory/usr/bin/bianbu-agent-memory
+	install -m 0755 packaging/bianbu-agent-memory-dplus debian/bianbu-agent-memory/usr/bin/bianbu-agent-memory-dplus
+	install -m 0755 packaging/bianbu-agent-memory-adapter debian/bianbu-agent-memory/usr/bin/bianbu-agent-memory-adapter
+	install -D -m 0644 packaging/bianbu-agent-memory-adapter.service debian/bianbu-agent-memory/lib/systemd/system/bianbu-agent-memory-adapter.service
+	install -D -m 0644 packaging/bianbu-agent-memory-adapter.service.d/10-loopback.conf debian/bianbu-agent-memory/lib/systemd/system/bianbu-agent-memory-adapter.service.d/10-loopback.conf
+	install -D -m 0644 sdk/python/pyproject.toml debian/bianbu-agent-memory/usr/share/doc/bianbu-agent-memory/pyproject.toml
+	install -D -m 0644 README.md debian/bianbu-agent-memory/usr/share/doc/bianbu-agent-memory/README.md
+
+override_dh_dwz:
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

@@ -1,0 +1,394 @@
+bianbu-agent-memory (0.1.19) unstable; urgency=medium
+
+  * 安装期提示对齐 bibit-intent：装 `bianbu-agent-memoryd` 时打印模型初始化在
+    `bianbu-agent-memory-embedding-provision.service` 里异步进行、以及在 Gateway
+    备好模型之前召回只走词法路径；装 `bianbu-agent-memory` 时，若 Runtime 的
+    bianbu.memory 插件已经安装，则说明该 MCP 由插件分发、本包不往用户主目录写
+    副本（两份的 id 不同，会同时被加载）。这两件事此前只写在文档里，安装输出
+    一个字都没有。
+  * provisioner 在一致性自检通过后多打一行模型在磁盘上的路径
+    （`verified Gateway model at
+    /home/example/.cache/models/embed/Qwen3-Embedding-0.6B-Q8_0.gguf`），对应
+    bibit-intent 安装时的 `embed: verified Gateway model at ...`。路径取自
+    `GET /v1/embed/models` 的 `local_path`，并且在自检之后重新读取——本次运行
+    才下载完的模型，下载前那次读到的 `local_path` 还是 null。
+  * 包版本升到 0.1.19（`--version` 由 `debian/changelog` 经 `build.rs` 打进
+    二进制，与 dpkg 版本不会漂移）。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Tue, 22 Sep 2026 23:20:00 +0800
+
+bianbu-agent-memory (0.1.18) unstable; urgency=medium
+
+  * `system.health` 不再把 `PRAGMA quick_check` 的瞬时读数当成数据损坏。0.1.17
+    及更早的 health 在池化连接上直接跑 `quick_check`；该库是 SQLCipher、FTS5
+    索引完好时也会返回 `malformed inverted index for FTS5 table
+    main.long_term_fts[2]`，health 随即把 status 打成 `degraded`。K3 现网库实测
+    （2026-09-22，每 5 s 一次独立检查）：这条判词在写入高峰之后、数据库已完全
+    安静时仍会持续复现约 100 s，随后自行消失并保持 `ok`，全程检索结果正确；
+    真实损坏不会自愈（把 `long_term_fts_docsize.sz` 改成 `zeroblob(8)` 可得同一
+    文本，但每一次取样都复现）。复现与定性见
+    `docs/GATEWAY_EMBEDDING_INTEGRATION.md` §8.2。现在判词只从"安静、WAL 为空、
+    且与写者互斥"的样本取：检查期间持有 daemon 的 `write_lock`；
+    `PRAGMA wal_checkpoint(TRUNCATE)` 必须先报告 WAL 已清空（因读者快照或后台
+    事务未完成而清不空时，直接判本次"无结论"）；再用 `BEGIN IMMEDIATE` +
+    `busy_timeout=0` 冻结该状态，并在事务内确认 `-wal` 仍是 0 字节——后台批处理
+    若在这两步之间提交，同样判"无结论"（有界重试 3 次 × 25 ms）；最后才跑
+    `quick_check`。此外，后台任务运行中、或最近
+    `AGENT_MEMORY_HEALTH_SETTLE_MS`（默认 3 s）内有过写入时，本次直接报
+    `busy`/`recent-activity`，不取样。
+  * 那条 FTS5 inverted-index 判词不再算判词：它以 `database_check.complaint`
+    原文呈现，`verdict` 仍为 `ok`，不参与 `status`；**其他任何**缺陷文本（含
+    "wrong number of entries in index …" 这类同样提到 FTS5 但语义不同的文本）
+    首次安静取样即发布为 `degraded`。曾先做成"投诉连续复现
+    `AGENT_MEMORY_HEALTH_CONFIRM_MS`（5 min）才发布"，被自己的闸门否掉：这条
+    判词的存活时间由写入活动决定，两轮负载叠加就能让它"连续复现"超过 5 min 并被
+    发布（第二次跑闸门 `after_load_degraded: 1`、`EXIT=1`），即持续写入的设备
+    迟早还是会看到误报。按时间确认的版本已废弃，相关环境变量不存在。
+  * `system.health` 响应新增 `database_check`（`state`/`reason`/`verdict`/
+    `complaint`/`checked_at_ms`/`age_ms`/`interval_ms`/`attempts`），把
+    `quick_check` 的结论与 `status` 分开呈现：`degraded` 只用于"已发布的缺陷"；
+    `state=busy`（写者占库或刚写过）与 `state=complaint`（FTS5 那条判词在案）都
+    不改变 `status`。`verdict` 为 `null` 且无判词可报时，`database` 取 `unknown`
+    （从未取样）或 `busy`（最近一次取样无结论），不再一律写 `busy`。监控/告警规则
+    应针对 `degraded` 触发，不要写 `status != "ok"`（`unknown` 现在是合法取值）。
+  * 有结论的判词按 `AGENT_MEMORY_HEALTH_CHECK_INTERVAL_MS`（默认 30 s）复用，既
+    不每次轮询都付整库读取（K3 现网库约 406 ms），也让相邻两次调用不可能给出不同
+    判词；待确认的投诉也按同一间隔重取样，避免高频轮询放大整库检查开销。
+  * 回归闸门：`scripts/k3_health_concurrency_probe.py` 改为判定脚本（负载中 0 次
+    `degraded`、0 次相邻取样判词翻转、功能不变量不破，才打印
+    `K3_HEALTH_CONCURRENCY_PROBE_OK`，否则退出码 1）；写者停下后还会按
+    `AFTER_LOAD_SAMPLES`/`AFTER_LOAD_INTERVAL` 继续取样（默认覆盖停写后约
+    3 min，长于实测的 ~100 s），这一段同样要求 0 次 `degraded`、0 次翻转——第一版
+    修法正是被这一段否掉的；
+    `scripts/k3_requirements_acceptance.py` 断言 `database=="ok"` 前先轮询等第一个
+    有结论的读数；`scripts/k3_production_install_verify.py` 新增闸门
+    `health_reports_no_phantom_degradation`（允许 `state=complaint`）。Rust 侧新增
+    单元测试覆盖判词分类与响应形状（两种表名都识别、语义不同但同样提到 FTS5 的
+    文本仍算缺陷、在案投诉不参与 `status`、`unknown` 与 `busy` 的区分）与集成用例
+    `health_reports_busy_instead_of_degraded_while_a_writer_holds_the_database`、
+    `health_reuses_the_integrity_verdict_within_the_check_interval`、
+    `health_reports_an_fts5_complaint_without_calling_the_database_degraded`（同时
+    断言召回不受影响）。
+  * `docs/CONFIGURATION.md` 新增 §9 记录两个环境变量、响应字段与告警口径。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Tue, 22 Sep 2026 21:45:00 +0800
+
+bianbu-agent-memory (0.1.17) unstable; urgency=medium
+
+  * 语义检索的推理栈整体移交给 spacemit-ai-gateway：memoryd 不再自管
+    llama-server 与模型下载脚本。`EmbeddingConfig::default()` 的 endpoint 由
+    `http://127.0.0.1:18801/v1` 改为网关 Embed 域
+    `http://127.0.0.1:18790/v1/embed`，model 由自由标签 `qwen3-embedding-0.6b`
+    改为网关模型 id `qwen3-embedding-0.6b-q8_0`。客户端 `EmbeddingClient`
+    零改动（`{base}/embeddings` 正好拼成 `/v1/embed/embeddings`）。设备上没有
+    网关或没有该模型时行为与旧版一致：静默降级为词法检索。
+  * 删除自管推理栈：`packaging/bianbu-agent-memory-embedding.service`（常驻
+    llama-server）与 `packaging/bianbu-agent-memory-download-embedding-model`
+    （Q8_0 下载校验脚本），以及 `debian/rules`、`postinst`、`prerm` 中对应的
+    install / enable / stop 逻辑。`postinst` 改为 enable 新 provisioner unit 并以
+    `systemctl --no-block start` 在后台触发首次 provision（dpkg 不等待 ~640 MiB
+    的下载）；`prerm` 不再有需要停止的本包推理进程。历史版本留下的
+    `/etc/bianbu-agent-memory/embedding.env` 与 `/var/lib/bianbu-agent-memory/models/`
+    一律保留，不主动删除。
+  * 新增 `bianbu-agent-memory-embedding-provision`（`/usr/libexec/`，Python 3
+    标准库，不引入新依赖）与同名 oneshot unit：`GET /v1/embed/healthz` →
+    `GET /models` → `POST /models/{id}/download`（带进度轮询与有界超时）→
+    `POST /models/load`，最后用新装的
+    `/usr/share/bianbu-agent-memoryd/embedding_parity_golden.json`（6 条中文文本的
+    基线向量，采集自现网 18801）逐条比对余弦，最低值 < 0.999 即以退出码 1 失败。
+    网关不存在、或网关没有这个模型 id 时记一行日志并以 0 退出（非致命，词法
+    降级继续可用）。
+  * 模型加载用 `extra_args` 显式钉死
+    `--pooling last --embd-normalize 2 --ctx-size 4096 --parallel 1`，而不是依赖
+    网关的 `embed.default_args`：后者是全局共享项，会被 Agent OS 意图模块
+    （bibit-intent）的 `deploy/configure-gateway-embedding.py` 改写为
+    `--pooling mean --ctx-size 2048`（维度仍是 1024，memoryd 无法察觉，会静默
+    污染索引）。`merge_and_dedup_args` 中 `extra_args` 优先于 `default_args`，
+    这是唯一免疫该改写的手段。网关默认 32768×4 槽会让 embed 进程 RSS 涨到
+    4.5 GB，钉死 ctx4096/parallel1 后与旧 18801 服务对齐（2.0 GB）。
+    `POST /models/load` 还是幂等的（进程已在运行时只返回成功、不重启），因此
+    provisioner 在模型已 `loaded` 时会先 `unload` 再 `load`：否则推理路径的一次
+    自动加载（用共享默认参数，实测 RSS 4.98 GB 而非钉死后的 1.78 GB）之后参数
+    就再也改不回来了。
+  * 不影响意图模块的四条红线：不写 `embed.backend`、`embed.default_args`、
+    `port_pool`；不调用 `POST /v1/embed/models/switch`（`_current_model` 继续指向
+    `bibit-embed`）；Memory 的推理请求始终显式带自己的 `model=`；保持
+    `auth.enabled: false`（memoryd 的 HTTP 客户端不带鉴权头）。意图模块经 18790
+    且显式传 `model=bibit-embed`，因此与 Memory 新增的模型注册项互不干扰。
+  * 一次性索引重建：`model` 由标签变为网关真实模型 id 后，向量过期判定
+    （`e.model!=?4`）会把存量向量判 stale 并触发后台重建。重建期间相关记忆退化为
+    词法召回，用户无感；这是有意为之 —— 未来网关侧换模型能被自动发现，而不是在
+    维度相同的情况下静默混用两套语义空间。
+  * 升级迁移：0.1.9~0.1.16 会在设备第一次保存设置时把当时的默认 endpoint
+    （`http://127.0.0.1:18801/v1` + `qwen3-embedding-0.6b`）写进
+    `memory.config.json` 的 `embedding` 段。该段是显式配置，新默认值对它不生效，
+    而 18801 服务在本版已被退役 —— 升级会"看起来成功"但语义检索静默退化成词法。
+    `read_config` 因此沿用 `converged_backup_scopes` 的既有先例，把**恰好等于这
+    对旧默认值**的配置在读取时收敛到网关 endpoint 与网关模型 id（其余字段不动，
+    任何自定义 endpoint 也不动，运维自托管场景不受影响）；收敛后的值就是设置页
+    与后续设置写入看到的值。
+  * 文档：新增 `docs/GATEWAY_EMBEDDING_INTEGRATION.md`（目标架构、实测证据、
+    四条红线、验证清单与回滚），并更新 `docs/CONFIGURATION.md`、
+    `docs/MODEL_USAGE.md`、`docs/TEST_CASES.md`、`docs/IMPLEMENTATION_STATUS.md`
+    与 `debian/README.Debian` 中指向 18801 与自管 unit 的描述；`debian/rules`
+    把新方案文档一并装进 `/usr/share/doc/bianbu-agent-memoryd/`。
+  * K3 实测（2026-09-22）：网关 `POST /v1/embed/embeddings` 与兼容路由
+    `POST /v1/embeddings` 均返回 1024 维；以 `qwen3-embedding-0.6b-q8_0` 加载后
+    对现网 18801 基线的 6 条文本余弦 1.0000（`q4_0` 只有 0.53~0.87，因此不复用
+    `bibit-embed`）；下载生命周期 `POST /models/{id}/download` → 进度 → `DELETE`
+    取消均正常，archive 字节数与旧下载脚本钉住的 639150592 一致。已知网关缺陷：
+    `POST /models/deregister` 实测有一次未回收 llama-server 进程（残留占用
+    18803），属网关侧问题，本方案不使用 deregister。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Tue, 22 Sep 2026 18:00:00 +0800
+
+bianbu-agent-memory (0.1.16) unstable; urgency=medium
+
+  * 收敛胶囊备份范围：`summaries`（L2 对话摘要）不再是可以申请、也不再会上传
+    的范围。产品 2026-09-07 已决定对话摘要不上云，规格 MEM-L4-02 要求胶囊
+    「不得包含 L2 对话摘要」，但源码里 `backup_scopes` 的默认值与三处校验白名单
+    都还留着 `summaries`，`collect_capsule_payload` 也仍按该 scope 收集
+    `session_summaries`。本次把默认值收敛为 `preferences`、`development_habits`、
+    `schedule_habits`（`product.rs` 新增 `BACKUP_SCOPES`，三处白名单统一引用它），
+    并在收集侧固定输出空的 `session_summaries`：字段名保留是为了旧胶囊的
+    preview/restore 读取路径不变，旧胶囊仍可恢复，只是不会再产生新的 L2 副本。
+  * 存量设备不会被这次收紧打断：0.1.15 的默认值 `["summaries","preferences",
+    "development_habits","schedule_habits"]` 既会写进 `memory_settings`，也会留在
+    产品配置 `memory.config.json` 里。后者是硬阻断：`read_config` 每次加载都要过
+    `validate_config`，直接收紧会让升级后的设备连自己的配置都读不出来（设置页、
+    语义索引、存储上限都依赖它）。现在两条路径都先过 `converged_backup_scopes()`：
+    丢弃已退役的 scope 与重复项、保持调用方顺序；`read_config` 在读入后先收敛再
+    校验（全部为未知 scope 的文件依旧报 `InvalidArgument`，不会变成静默放行），
+    下一次设置写入会把收敛后的列表持久化回文件；`privacy.settings.get` 返回、
+    `privacy.settings.update` 写回、`backup.run_scheduled` 取用三处同样收敛，
+    收敛后为空（例如旧设备只配了 `summaries`）时定时备份返回
+    `{"state":"skipped","reason":"backup_scopes_converged"}`，不报错。
+  * 回归覆盖：新增 `store_flow::legacy_summaries_scope_is_converged_and_never_leaves_the_device`
+    （写入旧配置行后：`backup.create` 与 `privacy.settings.update` 都拒绝
+    `summaries`、设置读取收敛为三类、定时备份照常 completed、`preview_restore`
+    的 `summaries_add` 为 0、后续一次无关设置写入把库里那行也收敛）与
+    `product::summaries_scope_is_retired_and_legacy_values_converge` 与
+    `product::legacy_config_file_with_the_retired_scope_still_loads`（旧配置文件仍可
+    加载、全未知 scope 仍报错、收敛后的列表可正常回写）；迁移 0007 的
+    列默认值同步收紧，`docs/CAPSULE_BACKUP.md`、`docs/CONFIGURATION.md`、
+    `docs/BIBIT_INTEGRATION_CONTRACT.md` 的「四类范围」改为三类。
+  * 本窗口同时包含 0.1.15 之后合并的内容：Memory adapter 默认只监听回环
+    （`127.0.0.1:5168` + drop-in + postinst 告警 + 打包防回退断言）、memoryd 的
+    D-Bus 启动改为 best-effort 不再拖垮 UDS、随包发布 D-Bus 策略与 unit `--dbus`、
+    摘要抽取改为句子级并补助手侧产出、归档摘要与事件溯源字段、SDK 读取被拒
+    不再伪装成 `no_match`、riscv64 发包命令文档。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Mon, 21 Sep 2026 18:00:00 +0800
+
+bianbu-agent-memory (0.1.15) unstable; urgency=medium
+
+  * 修复长记忆永远拿不到向量（P1，根因）：嵌入客户端原来按 16 KiB **字节**裁剪
+    文本，而 llama-server 的上下文是 2048 **token**，超出上下文的请求被 400 拒绝
+    且服务端不做截断，于是 4–16 KB 的中文记忆写入成功却永远不出现在语义检索结果
+    里（K3 实测 4000 汉字 = 2565 token > n_ctx 2048）。
+  * 客户端裁剪改为按 token 预算：新增 `embedding.max_text_tokens`（初值 1792，
+    64..=8192，为 2048 的窗口留约 12% 余量；随窗口扩大后提到 2560，见下），超预算
+    文本保留头部 + 尾部、中间以 `[...]` 省略（尾部占 25%），裁剪与嵌入失败都会在
+    journal 打出 `[semantic-embed]` 警告，不再静默丢数据。估算器不引入 tokenizer：
+    非 ASCII 字符按 1 token、ASCII 按每 3 字节 1 token 计，两者都是上界（K3 实测
+    中文约 0.64 token/字符）；宁可少留一点文本，也不能产生一个永远无法索引的 400。
+  * 提高索引路径超时：`embedding.index_timeout_ms` 默认 10000 → **30000**。token
+    裁剪让长记忆真正送到 embedding 服务后，一条满预算文本在 K3 上约 6 秒，原来的
+    10 秒只在「32 条短文本」的基准下才成立，单条长记忆就可能撞上超时并进入永久
+    ServerUnavailable 重试循环。
+  * 后台回填的批次预算与游标：单批上限先引入 **2 倍 `max_text_tokens`** 的 token
+    预算，随后改为固定常量 `EMBEDDING_BATCH_TEXT_TOKENS = 2560` —— 批次预算应由
+    延迟决定，不随每文本预算放大，否则调大 `max_text_tokens` 会让单批耗时悄悄
+    翻倍；单条超预算文本仍保证单独成批，不会卡住命名空间，短记忆仍按 `batch_size`
+    满批，吞吐不变。同时修复回填游标可能「跳过」待办行：高水位标记原来在每批之后
+    无条件前移，若一次扫描未取完（条数上限或 token 上限），剩余行会落在标记之后而
+    **永远不会再被索引**（模型/维度切换后大空间尤其明显）；现在只有「扫描未触到
+    LIMIT 且整批都已处理」时才前移标记，顺带把批次与 drained 状态写进
+    `[semantic-cache]` trace。
+  * 扩大语义覆盖（P2）：embedding 服务窗口 `--ctx-size` 2048 → **4096**，
+    `embedding.max_text_tokens` 默认 1792 → **2560**（约 1843 个真实 token）。长
+    记忆进入语义检索的正文从「头部 ~1342 + 尾部 ~447 token」提升到「头部 ~1920 +
+    尾部 ~640 token」。没有按窗口比例取 3584：K3 实测 prefill 成本超线性（1291
+    token 6.5 s、1843 → 10.3 s、2571 → 18.2 s），3584 单条要 18.2 s，与可能排在
+    它后面的提交后单条嵌入组合达 36 s，会撞穿 30000ms 的 `index_timeout_ms`；
+    2560 的最坏组合是 20.6 s（占预算 69%），故超时保持 30000 不变，若要取 3584
+    必须把 `index_timeout_ms` 一并提到 ≥ 45000。embedding unit 同时把窗口参数化为
+    `CTX_SIZE`（默认 4096），内存上限 `MemoryHigh/MemoryMax` 2G/2560M →
+    **3G/4G**（4096 窗口实测 cgroup 计费 1443 MiB，其中模型自身 604 MiB；设备
+    32 GiB 内存、无 swap）。
+  * 修复「索引在途时查询退化，退化结果被当作正确答案缓存」：查询侧语义阶段原来只
+    返回 Option，无法区分「本就没尝试向量召回」（embedding 关闭、查询过短、端点
+    配置不可用）与「尝试了但失败」（超时、服务不可达、扫描/取头失败）。两者都退回
+    纯词法，而搜索结果又被 MEM-NFR-01-01 热查询缓存整体记忆（无 TTL，只在下次写入
+    换代时失效），于是在后台回填占满单槽（`--parallel 1`）的那 10 秒里发出的查询，
+    会把「与记忆零关键词重叠就召回不到」这一退化结果缓存下来：slot 空闲后重复同一
+    问题仍是 0–2 ms 的空结果，直到该命名空间发生一次写入。K3 端到端实测：竞争期
+    0/4 召回、1525–1536 ms；空闲期 4/4 召回、72–144 ms。同前缀的优先级方案
+    （Nice=-10 + CPUWeight=10000）已实测证伪，不采用。语义阶段改为三态
+    `SemanticStage`（Unavailable / Degraded / Computed），只有 Computed（真正
+    算过）与 Unavailable（本来就不该有向量证据）才写热查询缓存；Degraded 仍返回
+    词法结果（MEM-NFR-02 关键词兜底不变）但不入缓存，下一次查询会重新尝试向量
+    召回；`[search-trace]` 新增 `cache-skip (semantic degraded)`。新增回归用例
+    `degraded_semantic_stage_is_not_memoized_by_the_search_cache`：用可切换的假
+    embedding 服务（请求超时不回包）先制造退化，再恢复后重问同一问题，断言必须
+    重新召回；并反向断言真正算出的结果依旧命中缓存。
+  * 修复固件流水线（开发板 / QEMU 的 chroot 构建环境，只有 root 用户）里
+    `bianbu-agent-memoryd` 配置失败：`install: invalid group: 'bianbu'`。postinst
+    原来用平台交互账号组 `bianbu` 建 `/var/lib/bianbu-agent-memory/capsules`，但该
+    账号属于镜像（uid/gid 1000）而不是本包，固件 chroot 里还不存在，`install -d`
+    返回 1 后 `set -e` 让整个 postinst 失败。capsules 是 0700、属组本来没有任何
+    权限，改用包自建组 `bianbu-agent`；`adduser bianbu-memory bianbu` 也改成仅在
+    组已存在时执行（运行时成员关系由 unit 的 `SupplementaryGroups=bianbu` 提供）。
+  * postinst 引入与平台 U-Boot 打包（uboot `debian/spacemit-boot-device.sh`）一致
+    的 `running_in_chroot` 判定：chroot 内跳过 `/run/bianbu` 的 tmpfiles 与
+    `install`/`setfacl`。这两步是运行时状态，每次启动由
+    `systemd-tmpfiles-setup.service` 和 unit 的 `ExecStartPre` 重建；构建镜像时
+    执行既无意义，又会在 `/run` 被 bind mount 时改到上位机的 `/run`。systemd 的
+    enable 保持无条件执行，服务烧录后首次启动仍然开机自启。密钥生成不再强依赖
+    `/dev/urandom`：优先 `/dev/urandom`，其次 `openssl rand`，两者都没有时明确报错。
+  * 已在 K3 上用 debootstrap 建的无 `bianbu` 用户/组 chroot 复现原报错，并验证修复
+    后的 deb 在 chroot 里 `dpkg -i` 完整通过；真机上服务状态、`/run/bianbu` ACL 与
+    密钥均不回退。
+  * `bianbu-agent-memoryd --version` 过去一直打印 0.1.6：clap 取 `CARGO_PKG_VERSION`，
+    而发布只更新 `debian/changelog`，workspace `Cargo.toml` 未跟随。改为构建期由
+    `crates/memoryd/build.rs` 从 `debian/changelog` 读版本写入 `--version`，并在
+    `debian/tests/validate-package-metadata.sh` 里校验两者一致；该校验随
+    `override_dh_auto_build` 执行，`DEB_BUILD_OPTIONS=nocheck` 时也不会被跳过。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Fri, 18 Sep 2026 10:00:00 +0800
+
+bianbu-agent-memory (0.1.14) unstable; urgency=medium
+
+  * 修复“我叫什么名字”等不带问号的姓名询问被误判为姓名声明，进而由
+    自动记忆提取覆盖 `profile.user_name` 的问题；“叫什么”和“叫啥”现在按
+    疑问句处理，不再生成长期记忆候选。
+  * 补充 ontology、规则 Mem0 和 D+ 投影回写三层回归测试，覆盖 K3 实际
+    故障语句并保留“我叫小圆”等姓名声明的原有行为。
+
+ -- 覃燕丽 <yanli.qin@spacemit.com>  Tue, 15 Sep 2026 21:38:01 +0800
+
+bianbu-agent-memory (0.1.13) unstable; urgency=medium
+
+  * 修复 MCP 子进程读不到 Runtime 主机上下文：FastMCP 把 tools/call 的
+    `_meta` 以 pydantic `Meta` 模型交给工具，`bianbu/host` 落在
+    `model_extra` 里。原来的读取只在 `isinstance(meta, Mapping)` 分支内回退到
+    `model_extra`，既不是 Mapping 的模型永远读不到，session/run/agent/account
+    全是空串；AgentMemory 于是带空 session 落证据，被 memoryd 判
+    `invalid evidence references`，MCP 写入静默失败。
+  * 写入失败不再一律折叠成 `backend_unavailable`：memoryd 的拒绝按真实错误码
+    返回（如 `invalid_argument`）并带原因，`memory_record` 的返回文本也给出
+    后端结论，避免「写入被拒」与「后端不可用」混为一谈。
+  * 证据 ID 按 memoryd 的标识符规则生成：空值或非法字符（含超长）时不再发非法
+    evidence，而是照常记录该条记忆但不带会话证据；未受 Runtime 管理的调用方不会
+    再因证据字段整条写失败。
+  * 修复 Worker 注册连接被提前关闭：`WorkerRegistration.open()` 原来在
+    `with socket.socket(...)` 里建连接，返回即关闭，broker 按 EOF 删注册项，
+    子进程刚注册就被静默注销。改为由实例持有连接，测试断言 broker 侧看不到
+    EOF。
+
+ -- liudecheng <decheng.liu@spacemit.com>  Tue, 15 Sep 2026 18:25:00 +0800
+
+bianbu-agent-memory (0.1.12) unstable; urgency=medium
+
+  * Ship an MCP server in the Python SDK:
+    `bianbu_agent_sdk.memory.mcp_server` exposes the AgentMemory tools
+    (`memory`, `memory_record`, `memory_retrieve`, `session_search`) over
+    stdio via `python -m bianbu_agent_sdk.memory.mcp_server`, so the Runtime's
+    bianbu.memory plugin can serve them as an MCP server instead of directory
+    Tools. New optional extra `mcp` pins `mcp>=1.9,<2`.
+  * The server reads its execution context from the Runtime: `_meta` on
+    `tools/call` carries the session/run/agent/account scope, and
+    `BIANBU_MEMORY_REGISTRATION_SOCKET` points at the Control-attested broker
+    that pins this process' memoryd registry entry for its whole lifetime.
+    Identity stays with memoryd's SO_PEERCRED verification; neither input is
+    an authorization input.
+  * Destructive `remove` mints its own one-shot confirmation token from
+    `/etc/bianbu-agent-memory/adapter-confirmation.secret`, so deleting a
+    memory needs no extra operator configuration once the Runtime has asked
+    the user for approval.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Tue, 15 Sep 2026 17:00:00 +0800
+
+bianbu-agent-memory (0.1.9) unstable; urgency=medium
+
+  * Enable semantic indexing out of the box: the embedding defaults now ship
+    enabled, base_url http://127.0.0.1:18801/v1, model qwen3-embedding-0.6b.
+    The three values move together because validate_config requires an
+    endpoint + model when enabled and a missing base_url silently disables
+    the client.
+  * Upgrade semantics: config files without an embedding section (or with
+    partial sections) backfill from the new defaults via serde(default) and
+    activate semantic indexing. Devices where the model has not landed yet
+    keep the graceful lexical-only degradation (MEM-NFR-02); background
+    indexing defers instead of failing. Explicit disabled sections keep
+    embedding off, and the settings-page toggle remains the opt-out.
+  * New AGENT_MEMORY_EMBEDDING_DISABLED=1 environment escape hatch suppresses
+    only the out-of-the-box default (same pattern as AGENT_MEMORY_CACHE_KB):
+    it keeps test suites hermetic when a real server listens on the default
+    port, and gives operators a config-free kill switch. Explicit embedding
+    sections are unaffected. Run the workspace tests with it set when a live
+    embedding server is present.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Sat, 12 Sep 2026 23:10:00 +0800
+
+bianbu-agent-memory (0.1.8) unstable; urgency=medium
+
+  * Decouple the indexing timeout from the interactive retrieval budget:
+    new embedding.index_timeout_ms (default 10000, 100..=600000) drives the
+    background backfill batches and the post-commit single-record embed,
+    while max_latency_ms stays the search-only budget (clamped to 1500 ms).
+    With the old shared 1500 ms default, 32-record batches on the K3 CPU
+    (~2.5 s) pushed large spaces into permanent ServerUnavailable retries.
+  * Ship the embedding model downloader (bibit-intent house pattern):
+    /usr/libexec/bianbu-agent-memory-download-embedding-model fetches the
+    Qwen3-Embedding-0.6B Q8_0 GGUF from the vendor model_zoo with
+    retry/resume and size + sha256 verification against the pinned release
+    hash.
+  * postinst starts the download as a background best-effort job, logs to
+    /var/log/bianbu-agent-memory-model-download.log, and enables + starts
+    the ConditionPathExists-gated embedding unit once the verified model
+    lands. Semantic indexing stays opt-in via embedding.enabled.
+  * memoryd unit StateDirectoryMode 0700 -> 0750: systemd re-enforces the
+    state directory mode on every start, silently overriding the postinst's
+    0750 and locking the embedding unit (User=bianbu) out of models/ after
+    any memoryd restart. Sensitive files keep their own 0600/0700.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Sat, 12 Sep 2026 19:30:00 +0800
+
+bianbu-agent-memory (0.1.7) unstable; urgency=medium
+
+  * Add the session_status selection mode: per-session one-line status with
+    title, last activity, completed-turn count and in-progress/interrupted
+    state, without the completed-turn gate.
+  * Render recent-session status lines in the SDK bridge and drop the
+    unconditional recent-turn injection from the default context path.
+  * Record a seven-day task_started watermark at run start so a session whose
+    first run is still executing is visible to other sessions.
+  * Update the acceptance and K3 e2e scripts for the new injection contract.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Fri, 11 Sep 2026 18:05:33 +0800
+
+bianbu-agent-memory (0.1.6) unstable; urgency=medium
+
+  * Record Runtime operation history in L2 with operation-scoped idempotency.
+  * Align release metadata and document the local HTTP summary-model contract.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Wed, 27 Aug 2026 12:00:00 +0800
+
+bianbu-agent-memory (0.1.5) unstable; urgency=medium
+
+  * Align Rust daemon and Python SDK versions with the Debian release.
+  * Preserve Runtime and Memory access when Security owns /run/bianbu.
+  * Rename the public SDK Debian binary package to bianbu-agent-memory.
+  * Align the Python distribution name with the public Debian package.
+  * Preserve upgrades from the former bianbu-agent-memory-sdk package.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Tue, 25 Aug 2026 10:30:00 +0800
+
+bianbu-agent-memory (0.1.1) unstable; urgency=medium
+
+  * Start the memory daemon when the SDK package is configured and verify the
+    installed SDK can be imported.
+  * Build and package the Rust Agent Memory daemon for K3.
+
+ -- Bianbu Agent Team <bianbu-agent@spacemit.com>  Mon, 24 Aug 2026 16:00:00 +0800
