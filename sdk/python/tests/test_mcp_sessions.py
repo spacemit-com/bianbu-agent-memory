@@ -141,6 +141,58 @@ async def _call(**arguments) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_no_match_explains_bounded_substring_search(monkeypatch):
+    _install(monkeypatch)
+    payload = await _call(query="does-not-exist")
+    assert payload["matches"] == []
+    assert payload["scope"]["match_mode"] == "substring"
+    assert payload["scope"]["event_limit_per_session"] == 200
+    assert payload["scope"]["candidate_count"] == 4
+    assert "not all history" in payload["note"]
+
+
+@pytest.mark.asyncio
+async def test_read_does_not_claim_complete_history(monkeypatch):
+    _install(monkeypatch)
+    payload = await _call(session_id="trip")
+    assert payload["scope"] == {"event_limit": 5000, "completeness": "unknown"}
+    assert session_tools._read_scope({"has_more": True, "next_cursor": "c"}, 5) == {
+        "event_limit": 5, "completeness": "partial", "has_more": True, "next_cursor": "c"
+    }
+
+
+@pytest.mark.asyncio
+async def test_permission_failure_is_not_service_unavailable(monkeypatch):
+    from bianbu_agent_sdk.memory.errors import ErrorContext, PermissionDenied
+    _install(monkeypatch, connect_error=PermissionDenied(
+        ErrorContext("PermissionDenied", "denied", "r", "t")))
+    payload = await _call()
+    assert payload["success"] is False
+    assert payload["code"] == "permission_denied"
+
+
+@pytest.mark.asyncio
+async def test_full_candidate_window_never_claims_global_oldest(monkeypatch):
+    _, client = _install(monkeypatch)
+    async def recent(**kwargs):
+        assert kwargs["session_limit"] == 20
+        return {"sessions": [
+            {"session_id": f"s-{i}", "last_active_at": 1000 - i}
+            for i in range(20)
+        ]}
+    async def history(session_id, **kwargs):
+        return {"events": [{"event_sequence": 1, "event_type": "user_message",
+                            "payload": {"text": session_id}}]}
+    client.sessions.get_recent_context = recent
+    client.sessions.get_history = history
+    payload = await _call(query="first session", limit=1)
+    assert payload["sessions"][0]["session_id"] == "s-19"
+    assert payload["selection_reason"] == "oldest_in_recent_window"
+    assert payload["scope"]["candidate_count"] == 20
+    assert payload["scope"]["completeness"] == "unknown"
+
+
+@pytest.mark.asyncio
 async def test_browse_lists_recent_sessions_newest_first(monkeypatch) -> None:
     factory, client = _install(monkeypatch)
 
@@ -234,7 +286,9 @@ async def test_origin_query_returns_oldest_sessions_with_transcripts(monkeypatch
 
     payload = await _call(query="最早的会话聊了什么", limit=2)
 
-    assert payload["selection_reason"] == "oldest_session"
+    assert payload["selection_reason"] == "oldest_in_recent_window"
+    assert payload["scope"]["session_limit"] == 20
+    assert "not the first session ever" in payload["note"]
     assert [item["session_id"] for item in payload["sessions"]] == ["old", "trip"]
 
 

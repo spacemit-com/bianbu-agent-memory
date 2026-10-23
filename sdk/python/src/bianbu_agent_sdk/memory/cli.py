@@ -34,6 +34,9 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("destination", type=Path)
     export.add_argument("--limit", type=int, default=500)
     export.add_argument("--without-audit", action="store_true")
+    import_data = subparsers.add_parser("import")
+    import_data.add_argument("source", type=Path)
+    import_data.add_argument("--confirm-token", required=True)
     checkpoint = subparsers.add_parser("checkpoint")
     checkpoint.add_argument("session_id")
     checkpoints = subparsers.add_parser("checkpoints")
@@ -61,6 +64,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def _boolean(value: str | None) -> bool | None:
     return None if value is None else value == "true"
+
+
+def _read_json(source: Path) -> dict[str, object]:
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise SystemExit("import source must contain a JSON object")
+    return value
 
 
 def _write_json(path: Path, value: Any) -> dict[str, Any]:
@@ -130,6 +140,11 @@ def _execute(client: MemoryClient, arguments: argparse.Namespace) -> Any:
                 limit_per_collection=arguments.limit,
                 include_audit=not arguments.without_audit,
             ),
+        )
+    if arguments.command == "import":
+        return client.privacy.import_data(
+            _read_json(arguments.source),
+            confirm_token=arguments.confirm_token,
         )
     if arguments.command == "checkpoint":
         return client.runtime.prepare_checkpoint(arguments.session_id)

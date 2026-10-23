@@ -20,6 +20,31 @@ from bianbu_agent_sdk.memory.runtime import (
 from bianbu_agent_sdk.memory.types import EvidenceRef, MemoryKind, SyncPolicy
 
 
+@pytest.mark.asyncio
+async def test_last_record_clipping_is_distinct_from_more_records(monkeypatch):
+    record = SimpleNamespace(
+        memory_id="long", kind=MemoryKind.PROFILE, text="界" * 300,
+        tags=(), revision=1, source="test", updated_at=1,
+    )
+    class LongTerm:
+        async def search_headers(self, query, top_k=5):
+            return [SimpleNamespace(memory_id="long", score=1.0)]
+
+        async def get_many(self, ids):
+            return [record]
+
+    monkeypatch.setenv("BIANBU_MEMORY_ENGINE", "scheme-a")
+    bridge = MemoryBridge()
+    bridge._client = SimpleNamespace(long_term=LongTerm())
+    outcome = await bridge.recall_structured_with_status("", max_chars=256)
+    item = outcome["items"][0]
+    assert len(item.text.encode("utf-8")) <= 256
+    assert item.to_dict()["text_truncated"] is True
+    assert outcome["truncated"] is False
+    complete = await bridge.recall_structured_with_status("", max_chars=1200)
+    assert complete["items"][0].text_truncated is False
+
+
 def test_corrupted_semantic_recall_text_is_rejected() -> None:
     assert not _usable_recall_text("?????????")
     assert not _usable_recall_text("??????????? Rust")
@@ -696,6 +721,60 @@ async def test_recall_always_includes_explicit_profile_records(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["hi", "你好", "在吗", "今天天气怎么样"])
+async def test_query_only_recall_does_not_fill_with_unrelated_profiles(monkeypatch, query):
+    calls = []
+    record = SimpleNamespace(
+        memory_id="profile-unrelated", kind=MemoryKind.PROFILE,
+        text="喜欢乒乓球", tags=(), revision=1, source="agent",
+    )
+
+    class LongTerm:
+        async def search_headers(self, query, top_k=5):
+            calls.append(query)
+            return [] if query else [SimpleNamespace(memory_id=record.memory_id, score=0.0)]
+
+        async def get_many(self, memory_ids):
+            return [record] if record.memory_id in memory_ids else []
+
+    monkeypatch.setenv("BIANBU_MEMORY_ENGINE", "scheme-a")
+    bridge = MemoryBridge()
+    bridge._client = SimpleNamespace(long_term=LongTerm())
+    assert await bridge.recall(query, include_explicit=False) == ()
+    assert calls == [query]
+    # Explicit retrieval still lists the stored profile, without a fake 1.0 score.
+    listed = await bridge.recall("")
+    assert len(listed) == 1
+    assert "喜欢乒乓球" in listed[0]
+    assert "score=0.000" in listed[0]
+
+
+@pytest.mark.asyncio
+async def test_query_only_recall_keeps_relevant_preference_and_rejects_weak_hit(monkeypatch):
+    records = [SimpleNamespace(
+        memory_id=key, kind=MemoryKind.PROFILE, text=text, tags=(),
+        revision=1, source="agent",
+    ) for key, text in (("editor", "开发工具是 vscode"), ("sport", "喜欢乒乓球"))]
+
+    class LongTerm:
+        async def search_headers(self, query, top_k=5):
+            assert query == "开发工具"
+            return [SimpleNamespace(memory_id="editor", score=0.8, relevance=1.0),
+                    SimpleNamespace(memory_id="sport", score=0.1, relevance=0.01)]
+
+        async def get_many(self, memory_ids):
+            return [r for r in records if r.memory_id in memory_ids]
+
+    monkeypatch.setenv("BIANBU_MEMORY_ENGINE", "scheme-a")
+    bridge = MemoryBridge()
+    bridge._client = SimpleNamespace(long_term=LongTerm())
+    recalled = await bridge.recall("开发工具", include_explicit=False)
+    assert len(recalled) == 1
+    assert "vscode" in recalled[0]
+    assert "score=0.800" in recalled[0]
+
+
+@pytest.mark.asyncio
 async def test_an_unordered_read_carries_an_extracted_preference(monkeypatch) -> None:
     """91.67 (2026-09-30): "输出记忆" answered with one entry out of five.
 
@@ -829,8 +908,9 @@ async def test_recent_context_degrades_to_header_only_on_legacy_daemon() -> None
     assert not any("旧 daemon 的轮次内容不应注入" in item for item in context)
 
 
+@pytest.mark.parametrize("extraction_text", [None, "另外以后回答请简洁"])
 @pytest.mark.asyncio
-async def test_record_turn_delegates_summary_and_checkpoint_to_server() -> None:
+async def test_record_turn_delegates_summary_and_checkpoint_to_server(extraction_text) -> None:
     class Sessions:
         def __init__(self) -> None:
             self.events = []
@@ -852,7 +932,7 @@ async def test_record_turn_delegates_summary_and_checkpoint_to_server() -> None:
 
     class Coordinator:
         async def ingest_turn(self, *args, **kwargs):
-            del args, kwargs
+            calls.append(kwargs)
 
     class Privacy:
         def __init__(self) -> None:
@@ -864,6 +944,7 @@ async def test_record_turn_delegates_summary_and_checkpoint_to_server() -> None:
         async def run_maintenance(self, **arguments):
             self.maintenance.append(arguments)
 
+    calls = []
     sessions = Sessions()
     runtime = Runtime()
     privacy = Privacy()
@@ -881,20 +962,50 @@ async def test_record_turn_delegates_summary_and_checkpoint_to_server() -> None:
         agent_id="agent-1",
         user_text="问题10",
         assistant_text="回答10",
+        extraction_text=extraction_text,
     )
 
-    assert sessions.summary is not None
-    session_id, arguments = sessions.summary
-    assert session_id == "session-1"
-    assert arguments["interval_turns"] == 4
-    assert arguments["keep_raw_turns"] == 8
+    assert calls[0]["user_text"] == (extraction_text if extraction_text is not None else "问题10")
+    assert sessions.events[0]["payload"]["text"] == "问题10"
+    assert sessions.summary is None  # append_event owns server-side scheduling
+    assert sessions.events[1]["payload"]["session_end"] is False
     assert runtime.checkpoint is not None
     assert runtime.checkpoint[0] == "session-1"
-    assert privacy.maintenance == [{"remove_expired": True}]
+    assert privacy.maintenance == []  # daemon background worker owns maintenance
     assert [item["event_type"] for item in sessions.events] == [
         "user_message",
         "assistant_message",
     ]
+
+
+@pytest.mark.asyncio
+async def test_record_turn_can_force_final_summary():
+    class Sessions:
+        def __init__(self): self.summary = None; self.events = []
+        async def append_event(self, **kwargs):
+            self.events.append(kwargs)
+            return {"event_id": "e"}
+        async def summarize(self, session_id, **kwargs): self.summary = (session_id, kwargs)
+
+    class Runtime:
+        async def prepare_checkpoint(self, *args, **kwargs): return None
+    class Privacy:
+        async def settings(self): return {"summary_interval_turns": 5, "recent_turn_limit": 5}
+        async def run_maintenance(self, **kwargs): return None
+    class Coordinator:
+        async def ingest_turn(self, *args, **kwargs): return None
+
+    sessions = Sessions()
+    bridge = MemoryBridge(coordinator=Coordinator())
+    client = SimpleNamespace(sessions=sessions, runtime=Runtime(), privacy=Privacy())
+    async def client_or_none(): return client
+    bridge._client_or_none = client_or_none
+    assert await bridge.record_turn(
+        run_id="final-run", session_id="short-session", agent_id="agent",
+        user_text="hi", assistant_text="hello", force_summary=True,
+    )
+    assert sessions.summary is None
+    assert sessions.events[1]["payload"]["session_end"] is True
 
 
 @pytest.mark.asyncio
@@ -1129,6 +1240,60 @@ async def test_pii_uses_encrypted_canonical_extraction_without_dplus_projection(
 
     assert projection.calls == []
     assert coordinator.calls[0]["sensitivity"] == "sensitive"
+
+
+@pytest.mark.asyncio
+async def test_curated_residual_bypasses_original_event_dplus_projection(
+    monkeypatch,
+) -> None:
+    class Sessions:
+        async def append_event(self, **arguments):
+            return {"event_id": arguments["event_type"]}
+
+        async def summarize(self, *args, **kwargs):
+            return None
+
+    class Runtime:
+        async def prepare_checkpoint(self, *args, **kwargs):
+            return None
+
+    class Privacy:
+        async def run_maintenance(self, **kwargs):
+            return None
+
+    class Projection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def enqueue_turn(self, **arguments):
+            self.calls.append(arguments)
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def ingest_turn(self, *args, **kwargs):
+            self.calls.append(kwargs)
+
+    monkeypatch.setenv("BIANBU_MEMORY_ENGINE", "dplus")
+    coordinator = Coordinator()
+    projection = Projection()
+    bridge = MemoryBridge(coordinator=coordinator)
+    bridge._client = SimpleNamespace(
+        sessions=Sessions(), runtime=Runtime(), privacy=Privacy(), projection=projection
+    )
+
+    assert await bridge.record_turn(
+        run_id="pii-run",
+        session_id="pii-session",
+        agent_id="agent-1",
+        user_text="会议已保存。另外以后请用短句回答。",
+        extraction_text="以后请用短句回答。",
+        assistant_text="你好，测试用户",
+    )
+
+    assert projection.calls == []
+    assert coordinator.calls[0]["user_text"] == "以后请用短句回答。"
 
 
 @pytest.mark.asyncio

@@ -261,33 +261,6 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
     updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS backup_jobs (
-    job_id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    agent_id TEXT,
-    job_type TEXT NOT NULL,
-    state TEXT NOT NULL,
-    backup_id TEXT,
-    progress INTEGER NOT NULL DEFAULT 0,
-    error_code TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS backup_catalog (
-    backup_id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    agent_id TEXT,
-    capsule_version INTEGER NOT NULL,
-    base_backup_id TEXT,
-    sync_cursor TEXT,
-    manifest_hash TEXT NOT NULL,
-    object_ref TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    retention_until INTEGER,
-    verification_state TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS audit_spool (
     audit_id TEXT PRIMARY KEY,
     event_type TEXT NOT NULL,

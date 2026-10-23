@@ -318,6 +318,26 @@ async def test_memory_retrieve_returns_structured_recall(monkeypatch) -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_record_exception_keeps_refusal_code(monkeypatch):
+    async def refusing_bridge(host):
+        raise _refusal()
+    monkeypatch.setattr(memory_tools, "bridge", refusing_bridge)
+    result = await memory_tools.memory_record(HOST, content="tea")
+    assert "unauthenticated" in result
+    assert result != "memory recorded"
+
+
+@pytest.mark.asyncio
+async def test_record_timeout_is_not_reported_as_success(monkeypatch):
+    async def timeout_bridge(host):
+        raise TimeoutError()
+    monkeypatch.setattr(memory_tools, "bridge", timeout_bridge)
+    result = await memory_tools.memory_record(HOST, content="tea")
+    assert "timed out" in result
+    assert "not confirmed recorded" in result
+
+
 class _WindowBridge:
     """Hand back at most the caller's window, out of a store of a fixed size."""
 
@@ -745,3 +765,24 @@ def test_confirmation_token_is_empty_without_a_secret(monkeypatch) -> None:
         memory_tools, "DEFAULT_CONFIRMATION_SECRET", "/nonexistent/secret"
     )
     assert memory_tools._confirmation_token() == ""
+
+
+@pytest.mark.asyncio
+async def test_memory_replace_normalizes_relative_date_without_slot(monkeypatch):
+    from bianbu_agent_sdk.memory.temporal import now_local
+    from datetime import timedelta
+    long_term = _use_stub_bridge(monkeypatch)
+    long_term.records[0].kind = MemoryKind.FACT
+    long_term.records[0].tags = ("personal-agent", "memory")
+    long_term.records[0].text = "meeting card"
+    from bianbu_agent_sdk.memory.client import AsyncMemoryClient
+    async def close():
+        pass
+    async def connect(*args, **kwargs):
+        return SimpleNamespace(long_term=long_term, close=close)
+    monkeypatch.setattr(AsyncMemoryClient, "connect", connect)
+    payload = json.loads(await memory_tools.memory(
+        HOST, target="memory", action="replace", memory_id="terminal-dark",
+        content="明天早上9点会议，卡片紫色"))
+    assert payload["success"], payload
+    assert (now_local().date() + timedelta(days=1)).isoformat() in long_term.revise_calls[0][1]["text"]

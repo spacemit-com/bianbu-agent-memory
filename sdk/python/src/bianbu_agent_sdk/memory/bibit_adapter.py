@@ -36,6 +36,10 @@ SERVICE_ID = "memory"
 INVOKE_PATH = "/bibit/v1/invoke"
 INVOKE_PATHS = frozenset({INVOKE_PATH, "/invoke"})
 MAX_BODY_BYTES = 128 * 1024
+# An export document carries whole memory records; a 128 KiB ceiling would
+# reject the very file the settings page just wrote. Imports may use the same
+# frame budget memoryd itself accepts, and still no more.
+MAX_IMPORT_BODY_BYTES = 4 * 1024 * 1024
 DEFAULT_REGISTRY = "/run/bianbu/agent-runtime/memory-registry"
 DEFAULT_SECRET_FILE = "/etc/bianbu-agent-memory/adapter-confirmation.secret"
 ALLOWED_OPERATIONS = frozenset(
@@ -45,6 +49,7 @@ ALLOWED_OPERATIONS = frozenset(
         "privacy.clear_history",
         "privacy.clear_all",
         "privacy.export_data",
+        "privacy.import_data",
     }
 )
 CAPABILITIES = [
@@ -165,7 +170,18 @@ class AdapterState:
                 limit_per_collection=max(1, min(int(params.get("limit_per_collection", 500)), 500)),
                 include_audit=bool(params.get("include_audit", True)),
                 confirm_token=confirmation,
+                # The settings page asks once and receives one complete file;
+                # paging is an SDK transport detail, not a UI state machine.
+                all_pages=bool(params.get("all_pages", True)),
             )
+        if operation == "privacy.import_data":
+            payload = params.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("import payload must be an object")
+            if self.confirmation_secret is None:
+                raise RuntimeError("import confirmation is not configured for this adapter")
+            token = _confirmation_token(self.confirmation_secret, operation)
+            return self.client.privacy.import_data(payload, confirm_token=token)
         if self.confirmation_secret is None:
             raise RuntimeError("destructive Memory operations are not configured for this adapter")
         token = _confirmation_token(self.confirmation_secret, operation)
@@ -216,11 +232,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > MAX_BODY_BYTES:
+            # The operation is only known after parsing, so a body above the
+            # default ceiling is accepted here and rejected below unless it is
+            # an import that is still inside its own (larger) budget.
+            if length <= 0 or length > MAX_IMPORT_BODY_BYTES:
                 raise ValueError("request body is missing or too large")
             request = json.loads(self.rfile.read(length))
             if not isinstance(request, dict):
                 raise ValueError("request must be a JSON object")
+            if length > MAX_BODY_BYTES and request.get("operationId") != "privacy.import_data":
+                raise ValueError("request body is missing or too large")
             response = self._invoke(request)
             self._write(200, response)
         except ValueError as error:

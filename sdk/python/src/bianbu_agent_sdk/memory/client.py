@@ -186,7 +186,6 @@ class MemoryClient:
         self.identity = identity
         from .account import AccountAPI
         from .administration import AuditAPI, PrivacyAPI, RuntimeAPI
-        from .backup import BackupAPI
         from .instruction import InstructionAPI
         from .long_term import LongTermAPI
         from .projection import ProjectionAPI
@@ -195,7 +194,6 @@ class MemoryClient:
 
         self.account = AccountAPI(self)
         self.audit = AuditAPI(self)
-        self.backup = BackupAPI(self)
         self.instructions = InstructionAPI(self)
         self.long_term = LongTermAPI(self)
         self.projection = ProjectionAPI(self)
@@ -258,7 +256,6 @@ class AsyncMemoryClient:
         self.identity = client.identity
         from .account import AsyncAccountAPI
         from .administration import AsyncAuditAPI, AsyncPrivacyAPI, AsyncRuntimeAPI
-        from .backup import AsyncBackupAPI
         from .instruction import AsyncInstructionAPI
         from .long_term import AsyncLongTermAPI
         from .projection import AsyncProjectionAPI
@@ -267,7 +264,6 @@ class AsyncMemoryClient:
 
         self.account = AsyncAccountAPI(self)
         self.audit = AsyncAuditAPI(self)
-        self.backup = AsyncBackupAPI(self)
         self.instructions = AsyncInstructionAPI(self)
         self.long_term = AsyncLongTermAPI(self)
         self.projection = AsyncProjectionAPI(self)

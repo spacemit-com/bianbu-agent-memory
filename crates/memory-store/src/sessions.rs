@@ -330,6 +330,7 @@ impl Store {
         // when a summary is produced, but they are neither a trigger source nor
         // a gate bypass.
         let should_auto_summarize = input.event_type == "assistant_message";
+        let session_end = input.payload.get("session_end").and_then(Value::as_bool) == Some(true);
         let summary_session_id = input.session_id.clone();
         let product_config = self.product_config()?;
         let summary_interval_turns = product_config.summary_interval_turns;
@@ -382,7 +383,8 @@ impl Store {
             summary_request.params = json!({
                 "session_id":summary_session_id,
                 "interval_turns":summary_interval_turns,
-                "keep_raw_turns":recent_turn_limit
+                "keep_raw_turns":recent_turn_limit,
+                "force":session_end
             });
             summary_request.idempotency_key = Some(format!(
                 "memoryd:auto-summary:{}:{}",
@@ -2580,7 +2582,7 @@ fn parse_model_json(text: &str) -> Result<Value, String> {
     Err("summary model JSON object is incomplete".to_owned())
 }
 
-fn validate_session_id(value: &str) -> ServiceResult<()> {
+pub(crate) fn validate_session_id(value: &str) -> ServiceResult<()> {
     if memory_core::valid_identifier(value) {
         Ok(())
     } else {
@@ -2603,7 +2605,7 @@ fn empty_summary() -> Value {
     })
 }
 
-fn validate_summary_patch(value: &Value) -> ServiceResult<()> {
+pub(crate) fn validate_summary_patch(value: &Value) -> ServiceResult<()> {
     let object = value
         .as_object()
         .ok_or_else(|| ServiceError::invalid("summary patch must be an object"))?;

@@ -14,7 +14,8 @@ assert canonical == "pnpm"
 
 | 正式名称 | 中文/英文别名示例 | 类型和值校验 |
 | --- | --- | --- |
-| `profile.user_name` | 姓名、名字、称呼、user name | 非空字符串，最多 64 UTF-8 字节 |
+| `profile.user_name` | 姓名、名字、user name | 非空字符串，最多 64 UTF-8 字节 |
+| `profile.preferred_address` | 称呼、昵称、preferred address、nickname | 非空字符串，最多 64 UTF-8 字节 |
 | `schedule.timezone` | 时区、timezone | `UTC` 或 IANA 名称，最多 64 字节 |
 | `schedule.week_start` | 每周第一天、一周开始日 | monday..sunday；周一/星期一等归一化 |
 | `schedule.default_reminder_time` | 默认提醒时间 | 24 小时制 `HH:MM` |
@@ -55,6 +56,24 @@ assert canonical == "pnpm"
 - 项目自己的规则只在当前 workspace/run 中生效，不要写成用户全局 L3，除非用户明确要求以后都采用。
 - 常用命令只保存用户明确指定或项目规则确认过的命令；不得仅因一次工具调用就推断成长期习惯。
 - 用户当前明确值与旧 L3 冲突时，当前请求优先；若用户明确表达长期变更，再创建新 revision 并使旧值失效。
+
+## 重要标记（`important`）
+
+`important` 是保留标签，不是 `slot:`：`validate_tags` 限制每条记录最多一个槽位，
+用槽位会与记录自己的字段槽位冲突。标记与记录的内容类型正交，因此单独存在于
+`tags` 中，并由召回结果原样回显。
+
+- 只由显式动作产生，**不从字面推断**：是否重要由用户决定，模型不得代用户判断；
+- 标记/取消标记是一次普通 `long_term.revise`，复用既有 revision 与合规检查，
+  不引入新的存储格式；
+- 入口：CLI `mark-important`/`unmark-important`、SDK `long_term.mark_important`、
+  MCP 工具 `action="mark_important"`；
+- 召回结果在 `tags` 里回显该标记（非空时才输出）：模型和用户据此判断哪些记忆
+  被标记为重要，不必从正文推断；
+- 云备份退役前，`important` 还是一个上传范围；该范围随云备份一起删除，标签与
+  `mark-important` 入口保留（PRD 把“重要标记”定义为 L3 长期记忆的组成部分，
+  与备份无关）。
+
 
 ## 历史数据的收口（0.1.17 之前落库的行）
 

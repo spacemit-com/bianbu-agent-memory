@@ -25,15 +25,14 @@ PermissionsStartOnly=true
 ExecStartPre=/usr/bin/setfacl -m u:bianbu-memory:rwx,m::rwx /run/bianbu
 ExecStartPre=/usr/bin/install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime
 ExecStartPre=/usr/bin/install -d -o root -g bianbu-agent -m 2770 /run/bianbu/agent-runtime/memory-registry
-EnvironmentFile=-/etc/bianbu-agent-memory/backup.env
 # 0750, not 0700: systemd re-enforces this mode on every start and would
 # otherwise override the postinst's 0750, locking the embedding unit
 # (User=bianbu, Group=bianbu-agent) out of the models/ path below. Sensitive
-# files inside (memory.db, memory.keypkg, capsules/) keep their own 0600/0700.
+# files inside (memory.db, memory.keypkg) keep their own 0600/0700.
 StateDirectory=bianbu-agent-memory
 StateDirectoryMode=0750
 UMask=0007
-ExecStart=/usr/libexec/bianbu-agent-memoryd --socket /run/bianbu/agent-memoryd.sock --database /var/lib/bianbu-agent-memory/memory.db --runtime-registry-dir /run/bianbu/agent-runtime/memory-registry --key-package /var/lib/bianbu-agent-memory/memory.keypkg --account-secret-file /etc/bianbu-agent-memory/account-secret --backup-directory /var/lib/bianbu-agent-memory/capsules --capsule-key-file /etc/bianbu-agent-memory/capsule-key --adapter-confirmation-secret-file /etc/bianbu-agent-memory/adapter-confirmation.secret --background-device-id %m --background-interval-seconds 60 --dbus
+ExecStart=/usr/libexec/bianbu-agent-memoryd --socket /run/bianbu/agent-memoryd.sock --database /var/lib/bianbu-agent-memory/memory.db --runtime-registry-dir /run/bianbu/agent-runtime/memory-registry --key-package /var/lib/bianbu-agent-memory/memory.keypkg --account-secret-file /etc/bianbu-agent-memory/account-secret --adapter-confirmation-secret-file /etc/bianbu-agent-memory/adapter-confirmation.secret --background-device-id %m --background-interval-seconds 60 --dbus
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true

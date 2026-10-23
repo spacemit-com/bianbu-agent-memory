@@ -208,7 +208,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="K3 断电注入验收")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--user", default=DEFAULT_USER)
-    parser.add_argument("--password", default=os.environ.get("K3_PASSWORD", ""))
+    parser.add_argument("--password", default=os.environ.get("K3_PASSWORD", "bianbu"))
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR)
     parser.add_argument("--markers", type=int, default=20)
     parser.add_argument("--boot-timeout", type=int, default=420)

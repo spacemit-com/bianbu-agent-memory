@@ -344,12 +344,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                           response.status == 200 and body.get("ok") is False,
                           f"status={response.status} body={response.body[:200]!r}")
 
-                    response = invoke(adapter_port, "privacy.settings.update", {"backup_frequency": "monthly"})
-                    ok_freq = response.json().get("ok") is True
-                    response = invoke(adapter_port, "privacy.settings.update", {"backup_frequency": "weekly"})
-                    check("settings-update-backup-frequency",
-                          ok_freq and response.json().get("ok") is True
-                          and (response.json().get("result") or {}).get("backup_frequency") == "weekly",
+                    # Cloud backup is retired: a 0.1.28-style client may still send
+                    # `backup_frequency`. It must be accepted (so the rest of the
+                    # settings write is not rejected) but must not resurface in the
+                    # response.
+                    response = invoke(adapter_port, "privacy.settings.update",
+                                      {"backup_frequency": "monthly", "retention_days": 7})
+                    payload = response.json()
+                    check("settings-update-retired-backup-key-ignored",
+                          payload.get("ok") is True
+                          and "backup_frequency" not in (payload.get("result") or {}),
+                          f"body={response.body[:200]!r}")
+                    response = invoke(adapter_port, "privacy.settings.update", {"retention_days": 0})
+                    check("settings-update-retention-restored",
+                          response.json().get("ok") is True,
                           f"body={response.body[:200]!r}")
 
                     # ---- confirmation levels (new `loose` value needs the new binary) ----

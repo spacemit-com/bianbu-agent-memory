@@ -7,6 +7,7 @@ import json
 import logging
 
 from ..client import DEFAULT_SOCKET, AsyncMemoryClient
+from ..errors import MemoryError, ServerUnavailable, failure_code
 from ..temporal import format_epoch_ms_display
 from .context import HostContext, memory_socket_path
 
@@ -131,6 +132,29 @@ def _error(code: str, message: str) -> str:
     return _dumps({"success": False, "code": code, "error": message})
 
 
+def _failure(exc: Exception) -> str:
+    if isinstance(exc, asyncio.TimeoutError):
+        return _error("memory_timeout", "AgentMemory session search timed out")
+    if isinstance(exc, MemoryError) and not isinstance(exc, ServerUnavailable):
+        return _error(failure_code(exc), str(exc))
+    return _error("memory_unavailable", f"Session search failed: {exc}")
+
+
+def _read_scope(history, event_limit: int) -> dict[str, object]:
+    # The backend currently has no reliable completeness contract. Do not infer
+    # completeness from the number of events returned (including an empty read).
+    scope: dict[str, object] = {
+        "event_limit": event_limit, "completeness": "unknown"
+    }
+    if isinstance(history, dict):
+        for key in ("has_more", "next_cursor"):
+            if key in history:
+                scope[key] = history[key]
+        if isinstance(history.get("has_more"), bool):
+            scope["completeness"] = "partial" if history["has_more"] else "complete"
+    return scope
+
+
 async def _fetch_status(client, current_session_id: str) -> list[dict[str, object]]:
     response = await client.sessions.get_recent_context(
         exclude_session_id=current_session_id or None,
@@ -153,6 +177,7 @@ async def _search(client, current_session_id: str, arguments: dict) -> str:
             "success": True,
             "session_id": requested_session,
             "messages": messages,
+            "scope": _read_scope(history, READ_EVENT_LIMIT),
         }
         if not messages:
             payload["note"] = (
@@ -162,6 +187,18 @@ async def _search(client, current_session_id: str, arguments: dict) -> str:
         return _dumps(payload)
 
     sessions = await _fetch_status(client, current_session_id)
+    scope = {
+        "type": "recent_sessions",
+        "session_limit": STATUS_SESSION_LIMIT,
+        "candidate_count": len(sessions),
+        "excludes_current_session": True,
+        "completeness": "unknown",
+    }
+    note = (
+        "Only the recent-session window was examined, not all history. "
+        "No matches does not mean the topic was never discussed. "
+        "Oldest means oldest in this window, not the first session ever."
+    )
     query = str(arguments.get("query") or "").strip()
     if query:
         origin = _is_origin_query(query)
@@ -183,6 +220,7 @@ async def _search(client, current_session_id: str, arguments: dict) -> str:
                         "title": entry["title"],
                         **_stamp(entry["last_active_at"]),
                         "messages": messages,
+                        "scope": _read_scope(history, READ_EVENT_LIMIT),
                     }
                 )
                 if len(selected) >= limit:
@@ -191,7 +229,9 @@ async def _search(client, current_session_id: str, arguments: dict) -> str:
                 {
                     "success": True,
                     "query": query,
-                    "selection_reason": "oldest_session",
+                    "selection_reason": "oldest_in_recent_window",
+                    "scope": {**scope, "event_limit_per_session": READ_EVENT_LIMIT},
+                    "note": note,
                     "sessions": selected,
                 }
             )
@@ -217,12 +257,19 @@ async def _search(client, current_session_id: str, arguments: dict) -> str:
                     break
             if len(matches) >= limit:
                 break
-        return _dumps({"success": True, "query": query, "matches": matches})
+        return _dumps({
+            "success": True, "query": query, "matches": matches,
+            "scope": {**scope, "event_limit_per_session": DISCOVERY_EVENT_LIMIT,
+                      "match_mode": "substring"},
+            "result_limit": limit, "note": note,
+        })
 
     ordered = (
         list(reversed(sessions)) if arguments.get("sort") == "oldest" else sessions
     )
-    return _dumps({"success": True, "sessions": ordered[:limit]})
+    return _dumps({"success": True, "sessions": ordered[:limit],
+                   "scope": scope, "result_limit": limit,
+                   "has_more_in_window": len(ordered) > limit, "note": note})
 
 
 async def session_search(
@@ -254,7 +301,7 @@ async def session_search(
         raise
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("AgentMemory session search connect failed: %s", exc)
-        return _error("memory_unavailable", f"AgentMemory is unavailable: {exc}")
+        return _failure(exc)
     try:
         return await asyncio.wait_for(
             _search(client, host.session_id, arguments),
@@ -270,7 +317,7 @@ async def session_search(
         raise
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("AgentMemory session search failed: %s", exc)
-        return _error("memory_unavailable", f"Session search failed: {exc}")
+        return _failure(exc)
     finally:
         try:
             await client.close()

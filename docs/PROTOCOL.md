@@ -74,10 +74,9 @@ Success and error envelopes:
 Long-term records may carry at most one `slot:<name>` tag. Slot names use ASCII
 letters, digits, `.`, `_`, and `-`; this keeps preference updates deterministic and
 prevents one record from becoming authoritative for unrelated fields.
-| Privacy / maintenance | `privacy.settings.get/update`, `privacy.export_data`, `privacy.clear_history/clear_all`, `maintenance.run` |
+| Privacy / maintenance | `privacy.settings.get/update`, `privacy.export_data/import_data`, `privacy.clear_history/clear_all`, `maintenance.run` |
 | Projection | `projection.enqueue_turn/claim/save_result/complete/fail/status/list_dead/requeue_dead/resolve/upsert_mapping`; dead-job listing is metadata-only and requeue is namespace/Capability scoped |
 | Sync | `sync.status/request` (durable offline queue; no cloud exchange adapter yet) |
-| Backup | `backup.create/run_scheduled/list/preview_restore/restore`; disabled by default and returns `BackupUnavailable` until both a Capsule key provider and storage Adapter are configured. `run_scheduled` performs Server-side manual/daily/weekly/monthly due evaluation. `memoryd` independently scans due maintenance/backup work and persists retry state in schema v8. Local-directory and optional HTTPS `X-API-Key` adapters are available; OAHU2 account authentication and Secret Broker key recovery remain external |
 | Audit | `audit.status/list/export/record`; local JSON export is configured, external SEC-06 export is pending |
 | Runtime | `runtime.prepare_checkpoint/list_checkpoints/restore_checkpoint` |
 

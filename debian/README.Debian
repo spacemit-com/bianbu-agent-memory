@@ -4,10 +4,12 @@ bianbu-agent-memory for Bianbu Agent
 The packages install the Rust daemon at /usr/libexec/bianbu-agent-memoryd, the
 Python client as bianbu-agent-memory, and the systemd unit
 bianbu-agent-memoryd.service. Installing the Memory package pulls in the matching
-daemon package. Installation creates protected account/capsule secrets and an
-encrypted database key package, verifies that the SDK is importable, enables
-the unit, and starts the daemon. The Runtime user is added to the bianbu-agent
-group and registers its PID-bound identity under
+daemon package. Installation creates the protected account secret, the adapter
+confirmation secret and an encrypted database key package, verifies that the
+SDK is importable, enables the unit, and starts the daemon. Cloud backup was
+retired on 2026-10-16, so the package no longer creates a capsule secret or a
+/var/lib/bianbu-agent-memory/capsules directory. The Runtime user is added to
+the bianbu-agent group and registers its PID-bound identity under
 /run/bianbu/agent-runtime/memory-registry.
 
 The tmpfiles configuration adds narrow POSIX ACL entries for the Runtime,

@@ -23,8 +23,6 @@ runtime_pid_file="$state_dir/runtime.pid"
 confirm_token_file="$state_dir/confirm-token"
 account_secret_file="$state_dir/account-secret"
 key_package_path="$state_dir/memory.keypkg"
-capsule_key_file="$state_dir/capsule-key"
-backup_directory="$state_dir/capsules"
 
 if [[ -z "$runtime_config" ]]; then
   if [[ -f "$runtime_root/k3-memory-runtime.yaml" ]]; then
@@ -82,13 +80,6 @@ if [[ ! -s "$account_secret_file" ]]; then
   chmod 600 "$account_secret_file"
 fi
 
-if [[ ! -s "$capsule_key_file" ]]; then
-  python3.13 -c 'import secrets; print(secrets.token_hex(32))' >"$capsule_key_file"
-  chmod 600 "$capsule_key_file"
-fi
-mkdir -p "$backup_directory"
-chmod 700 "$backup_directory"
-
 if [[ -s "$memory_pid_file" ]]; then
   old_memory_pid="$(cat "$memory_pid_file")"
   if kill -0 "$old_memory_pid" 2>/dev/null; then
@@ -115,8 +106,6 @@ nohup env BIANBU_MEMORY_DEV_CONFIRM_TOKEN="$confirm_token" \
   --database "$database_path" \
   --key-package "$key_package_path" \
   --account-secret-file "$account_secret_file" \
-  --backup-directory "$backup_directory" \
-  --capsule-key-file "$capsule_key_file" \
   --background-device-id "k3-manual" \
   "${migration_arguments[@]}" \
   >>"$memory_log" 2>&1 </dev/null &

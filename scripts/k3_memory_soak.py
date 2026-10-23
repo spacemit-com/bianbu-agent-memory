@@ -207,7 +207,7 @@ def storage_metrics() -> dict[str, object]:
         metrics["free_bytes"] = usage.free
     except OSError:
         metrics["free_bytes"] = None
-    for name, directory in (("capsules_bytes", DATA_DIR / "capsules"), ("models_bytes", MODEL_DIR)):
+    for name, directory in (("models_bytes", MODEL_DIR),):
         total = 0
         try:
             for entry in directory.rglob("*"):

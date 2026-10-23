@@ -199,7 +199,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="K3 本地开发包：构建 / 安装 / 校验")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--user", default=DEFAULT_USER)
-    parser.add_argument("--password", default=os.environ.get("K3_PASSWORD", ""))
+    parser.add_argument("--password", default=os.environ.get("K3_PASSWORD", "bianbu"))
     parser.add_argument("--nice", type=int, default=19, help="构建优先级（默认最低，避免扰动设备）")
     parser.add_argument("--build", action="store_true", help="执行 dpkg-buildpackage")
     parser.add_argument("--install", action="store_true", help="安装最新 debs 并复核")

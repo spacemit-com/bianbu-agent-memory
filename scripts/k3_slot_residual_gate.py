@@ -48,6 +48,34 @@ EXPECT_RESIDUAL = (
     "\u901a\u4fd7\u6613\u61c2\uff0c\u907f\u514d\u4e13\u4e1a\u672f\u8bed\u548c\u590d\u6742\u6b65\u9aa4"
 )
 
+#: The 2026-10-15 rename from defect 7136281755: one sentence that declares a
+#: name *and* an address.  It used to be stored as a single unslotted record, so
+#: the later rename moved the name while the address stayed on the old value.
+RENAME_SENTENCE = (
+    "\u6211\u7684\u540d\u5b57\u53eb\u738b\u6e90\uff0c\u4ee5\u540e\u53eb\u6211\u5c0f\u5143"
+)
+RENAME_NAME = "\u6211\u7684\u540d\u5b57\u53eb\u738b\u6e90"
+RENAME_ADDRESS = "\u4ee5\u540e\u53eb\u6211\u5c0f\u5143"
+
+#: The second rename: it must converge both single-valued slots, not stack up a
+#: second identity beside the first.
+RENAME_AGAIN_SENTENCE = (
+    "\u6211\u7684\u540d\u5b57\u53eb\u674e\u96f7\uff0c\u4ee5\u540e\u53eb\u6211\u5c0f\u674e"
+)
+RENAME_AGAIN_NAME = "\u6211\u7684\u540d\u5b57\u53eb\u674e\u96f7"
+RENAME_AGAIN_ADDRESS = "\u4ee5\u540e\u53eb\u6211\u5c0f\u674e"
+
+#: The fused record the defect left in the store: a name and an address in one
+#: unslotted entry, so neither rename reached the half it was about.
+RENAME_FUSED = (
+    "\u7528\u6237\u540d\u5b57\u662f Dong\uff0c\u5e0c\u671b\u88ab\u79f0\u547c\u4e3a"
+    "\u300c\u592a\u5976\u300d\u3002"
+)
+
+#: The two halves the fused sentence splits into on the way in.
+RENAME_FUSED_NAME = "\u7528\u6237\u540d\u5b57\u662f Dong"
+RENAME_FUSED_ADDRESS = "\u5e0c\u671b\u88ab\u79f0\u547c\u4e3a\u300c\u592a\u5976\u300d"
+
 CHECKS: list[dict[str, object]] = []
 
 
@@ -96,6 +124,24 @@ def check_classification() -> None:
         "classify-english-compound-not-a-slot",
         preference_slot("my name is Alice and I like tea") is None,
         preference_slot("my name is Alice and I like tea"),
+    )
+    # Defect 7136281755: an address owns its own single-valued field, so the
+    # sentence that declares a name and an address belongs to neither field on
+    # its own (extraction splits it), while a bare address claims the new one.
+    check(
+        "classify-rename-sentence-not-a-slot",
+        preference_slot(RENAME_SENTENCE) is None,
+        preference_slot(RENAME_SENTENCE),
+    )
+    check(
+        "classify-bare-address-slots",
+        preference_slot(RENAME_ADDRESS) == "profile.preferred_address",
+        preference_slot(RENAME_ADDRESS),
+    )
+    check(
+        "classify-fused-legacy-record-not-a-name-slot",
+        preference_slot(RENAME_FUSED) is None,
+        preference_slot(RENAME_FUSED),
     )
 
 
@@ -206,6 +252,105 @@ async def check_legacy_overwrite(client: AsyncMemoryClient, bridge: MemoryBridge
     }
 
 
+async def check_rename_slots(client: AsyncMemoryClient, bridge: MemoryBridge) -> dict[str, object]:
+    """Defect 7136281755: a rename must reach the address field, not just the name.
+
+    The defect-era store held the identity as one unslotted sentence, so the
+    rename moved the name slot while the address kept answering from the old
+    value.  Two slotted fields change that: the fused sentence splits on the way
+    in, and each later rename converges both fields instead of stacking a second
+    identity beside the first.
+    """
+
+    # Single-valued is a property of the whole store, so these read it globally:
+    # a rename may *revise* the field record a previous turn wrote, and exactly
+    # one record per field is what "no second identity" means.
+    async def slot_records(slot: str) -> list[object]:
+        return [
+            record
+            for record in await all_records(client)
+            if any(str(tag) == f"slot:{slot}" for tag in record.tags)
+        ]
+
+    async def rename(session_id: str, turn: str, label: str) -> None:
+        ok = await bridge.record_turn(
+            run_id=f"{session_id}-{label}",
+            session_id=session_id,
+            agent_id="k3-slot-residual-gate",
+            user_text=turn,
+            assistant_text="\u6536\u5230\u3002",
+        )
+        check(f"rename-{label}-turn-recorded", ok is True, ok)
+
+    session_id = f"slot-rename-{uuid.uuid4().hex[:8]}"
+
+    # Turn 1: the fused sentence the defect left behind ("用户名字是 Dong，希望被称呼
+    # 为「太奶」") is split into the two single-valued fields it declares.
+    await rename(session_id, RENAME_FUSED, "seed")
+    names = await slot_records("profile.user_name")
+    addresses = await slot_records("profile.preferred_address")
+    check(
+        "fused-sentence-writes-the-name-field",
+        len(names) == 1 and names[0].text == RENAME_FUSED_NAME,
+        [(record.text, record.revision) for record in names],
+    )
+    check(
+        "fused-sentence-writes-the-address-field",
+        len(addresses) == 1 and addresses[0].text == RENAME_FUSED_ADDRESS,
+        [(record.text, record.revision) for record in addresses],
+    )
+
+    # Turn 2: the 2026-10-15 rename.  Both fields move; neither is re-added.
+    await rename(session_id, RENAME_SENTENCE, "rename")
+    names_after = await slot_records("profile.user_name")
+    addresses_after = await slot_records("profile.preferred_address")
+    check(
+        "rename-moves-the-name-field",
+        len(names_after) == 1 and names_after[0].text == RENAME_NAME,
+        [(record.text, record.revision) for record in names_after],
+    )
+    check(
+        "rename-moves-the-address-field",
+        len(addresses_after) == 1 and addresses_after[0].text == RENAME_ADDRESS,
+        [(record.text, record.revision) for record in addresses_after],
+    )
+    check(
+        "rename-does-not-stack-a-second-identity",
+        len(names_after) == 1 and len(addresses_after) == 1,
+        (len(names_after), len(addresses_after)),
+    )
+
+    # Turn 3: a second rename converges the same two fields again.
+    await rename(session_id, RENAME_AGAIN_SENTENCE, "rename-again")
+    names_final = await slot_records("profile.user_name")
+    addresses_final = await slot_records("profile.preferred_address")
+    check(
+        "second-rename-converges-the-name-field",
+        len(names_final) == 1 and names_final[0].text == RENAME_AGAIN_NAME,
+        [(record.text, record.revision) for record in names_final],
+    )
+    check(
+        "second-rename-converges-the-address-field",
+        len(addresses_final) == 1 and addresses_final[0].text == RENAME_AGAIN_ADDRESS,
+        [(record.text, record.revision) for record in addresses_final],
+    )
+
+    recalled = await bridge.recall(RENAME_AGAIN_NAME, top_k=5)
+    check(
+        "renamed-identity-is-recallable",
+        any(RENAME_AGAIN_ADDRESS in item for item in recalled),
+        list(recalled)[:5],
+    )
+
+    return {
+        "session_id": session_id,
+        "name_slot": names_final[0].text if names_final else None,
+        "name_revision": names_final[0].revision if names_final else None,
+        "address_slot": addresses_final[0].text if addresses_final else None,
+        "address_revision": addresses_final[0].revision if addresses_final else None,
+    }
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--memoryd", default="target/release/bianbu-agent-memoryd", type=Path)
@@ -255,6 +400,7 @@ async def main() -> int:
                     ("classification", check_classification),
                     ("write_path", lambda: check_write_path(client, bridge)),
                     ("legacy_overwrite", lambda: check_legacy_overwrite(client, bridge)),
+                    ("rename_slots", lambda: check_rename_slots(client, bridge)),
                 ):
                     try:
                         produced = runner()

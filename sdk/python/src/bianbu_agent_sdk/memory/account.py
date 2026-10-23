@@ -44,3 +44,4 @@ class AsyncAccountAPI:
 
     async def logout(self, *, confirm_token: str) -> dict[str, Any]:
         return await self._client._call("account.logout", {"confirm_token": confirm_token})
+

@@ -1,6 +1,5 @@
 mod administration;
 mod background;
-mod backup;
 mod embedding;
 mod instructions;
 mod long_term;
@@ -8,11 +7,6 @@ mod product;
 mod projection;
 mod search_cache;
 mod sessions;
-
-pub use backup::{
-    BackupMetadata, BackupObject, BackupStorageAdapter, HttpBackupStorage,
-    LocalDirectoryBackupStorage,
-};
 
 use memory_core::{capability, now_ms, Hlc, MemoryIdentity};
 use memory_protocol::{required_capability, RequestEnvelope, ServiceError};
@@ -184,8 +178,6 @@ enum IntegrityCheck {
 pub struct Store {
     path: PathBuf,
     database_key_hex: Option<String>,
-    backup_storage: Option<Arc<dyn BackupStorageAdapter>>,
-    capsule_key: Option<[u8; 32]>,
     product_config_path: PathBuf,
     product_config_lock: Arc<Mutex<()>>,
     // Parsed product config with its (mtime, size) stamp. The privacy gate in
@@ -214,53 +206,19 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> ServiceResult<Self> {
-        Self::open_internal(path.as_ref(), None, None, None)
+        Self::open_internal(path.as_ref(), None)
     }
 
     pub fn open_encrypted(path: impl AsRef<Path>, database_key: &[u8]) -> ServiceResult<Self> {
         if database_key.len() != 32 {
             return Err(ServiceError::invalid("database key must contain 32 bytes"));
         }
-        Self::open_internal(path.as_ref(), Some(hex::encode(database_key)), None, None)
-    }
-
-    pub fn open_with_backup(
-        path: impl AsRef<Path>,
-        database_key: Option<&[u8]>,
-        backup_directory: impl AsRef<Path>,
-        capsule_key: &[u8],
-    ) -> ServiceResult<Self> {
-        let adapter = Arc::new(LocalDirectoryBackupStorage::new(backup_directory));
-        Self::open_with_backup_adapter(path, database_key, adapter, capsule_key)
-    }
-
-    pub fn open_with_backup_adapter(
-        path: impl AsRef<Path>,
-        database_key: Option<&[u8]>,
-        backup_storage: Arc<dyn BackupStorageAdapter>,
-        capsule_key: &[u8],
-    ) -> ServiceResult<Self> {
-        if database_key.is_some_and(|key| key.len() != 32) {
-            return Err(ServiceError::invalid("database key must contain 32 bytes"));
-        }
-        if capsule_key.len() != 32 {
-            return Err(ServiceError::invalid("capsule key must contain 32 bytes"));
-        }
-        let mut key = [0_u8; 32];
-        key.copy_from_slice(capsule_key);
-        Self::open_internal(
-            path.as_ref(),
-            database_key.map(hex::encode),
-            Some(backup_storage),
-            Some(key),
-        )
+        Self::open_internal(path.as_ref(), Some(hex::encode(database_key)))
     }
 
     fn open_internal(
         path: &Path,
         database_key_hex: Option<String>,
-        backup_storage: Option<Arc<dyn BackupStorageAdapter>>,
-        capsule_key: Option<[u8; 32]>,
     ) -> ServiceResult<Self> {
         let path = path.to_path_buf();
         let product_config_path = path.with_extension("config.json");
@@ -271,8 +229,6 @@ impl Store {
         let store = Self {
             path,
             database_key_hex,
-            backup_storage,
-            capsule_key,
             product_config_path,
             product_config_lock: Arc::new(Mutex::new(())),
             product_config_cache: Arc::new(Mutex::new(product::ProductConfigCache::new())),
@@ -409,26 +365,6 @@ impl Store {
                 |row| row.get(0),
             )
             .map_err(db_error)?;
-        if schema_version < 7 {
-            transaction
-                .execute_batch(include_str!(
-                    "../../../migrations/0007_add_capsule_backup.sql"
-                ))
-                .map_err(db_error)?;
-            transaction
-                .execute(
-                    "INSERT INTO schema_migrations(version, applied_at) VALUES(7, ?1)",
-                    [now_ms()],
-                )
-                .map_err(db_error)?;
-        }
-        let schema_version: i64 = transaction
-            .query_row(
-                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
         if schema_version < 8 {
             transaction
                 .execute_batch(include_str!(
@@ -522,24 +458,15 @@ impl Store {
                 )
                 .map_err(db_error)?;
         }
-        let schema_version: i64 = transaction
-            .query_row(
-                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
-        if schema_version < 13 {
-            transaction
-                .execute_batch(include_str!(
-                    "../../../migrations/0013_add_important_backup_scope.sql"
-                ))
+        // Deployed legacy feature branches may carry higher version markers
+        // without this scheduler extension. Inspect the feature, not MAX(version).
+        let has_summary_cursor: bool = transaction
+            .query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('background_worker_state') WHERE name='scan_offset')",
+                [], |row| row.get(0)).map_err(db_error)?;
+        if !has_summary_cursor {
+            transaction.execute_batch(include_str!("../../../migrations/0014_add_summary_compensation.sql"))
                 .map_err(db_error)?;
-            transaction
-                .execute(
-                    "INSERT INTO schema_migrations(version, applied_at) VALUES(13, ?1)",
-                    [now_ms()],
-                )
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(14, ?1)", [now_ms()])
                 .map_err(db_error)?;
         }
         transaction.commit().map_err(db_error)?;
@@ -625,7 +552,6 @@ impl Store {
         Ok(json!({
             "database_bytes": database_bytes,
             "database_limit_bytes": config.max_database_bytes,
-            "backup_limit_bytes": config.max_backup_bytes,
             "free_bytes": free_bytes,
             "minimum_free_bytes": config.min_free_bytes,
             "within_limits": database_bytes <= config.max_database_bytes as u64
@@ -685,8 +611,6 @@ impl Store {
             "sync_cursors",
             "sync_conflicts",
             "sync_jobs",
-            "backup_jobs",
-            "backup_catalog",
         ];
         let legacy_account = format!("local:uid:{peer_uid}");
         let mut connection = self.connection()?;
@@ -858,19 +782,6 @@ impl Store {
             "projection.requeue_dead" => self.requeue_dead_projection_job(identity, request),
             "sync.status" => self.sync_status(identity),
             "sync.request" => self.request_sync(identity, request),
-            "backup.create" => self.create_backup(identity, request),
-            "backup.run_scheduled" => self.run_scheduled_backup(identity, request),
-            "backup.list" => self.list_backups(identity, request),
-            "backup.preview_restore" => self.preview_restore(identity, request),
-            "backup.restore" => {
-                if !confirm_token_verified {
-                    return Err(ServiceError::new(
-                        "PermissionDenied",
-                        "a verified confirmation token is required",
-                    ));
-                }
-                self.restore_backup(identity, request)
-            }
             "audit.status" => self.audit_status(identity),
             "audit.list" => self.list_audit(identity, request),
             "audit.export" => self.export_audit(identity, request),
@@ -878,6 +789,15 @@ impl Store {
             "privacy.settings.get" => self.get_privacy_settings(identity),
             "privacy.settings.update" => self.update_privacy_settings(identity, request),
             "privacy.export_data" => self.export_data(identity, request),
+            "privacy.import_data" => {
+                if !confirm_token_verified {
+                    return Err(ServiceError::new(
+                        "PermissionDenied",
+                        "a verified confirmation token is required",
+                    ));
+                }
+                self.import_data(identity, request)
+            }
             "privacy.clear_history" => {
                 if !confirm_token_verified {
                     return Err(ServiceError::new(
@@ -1061,11 +981,6 @@ impl Store {
                 |row| row.get(0),
             )
             .map_err(db_error)?;
-        let backup_adapter = self
-            .backup_storage
-            .as_ref()
-            .map(|adapter| adapter.name())
-            .unwrap_or("not_configured");
         let storage = self.storage_status()?;
         let embedding = self.effective_embedding_status()?;
         Ok(json!({
@@ -1074,8 +989,6 @@ impl Store {
             "database_check":database_check,
             "schema_version":schema,
             "storage_encryption":if self.database_key_hex.is_some() {"sqlcipher"} else {"plaintext_explicit"},
-            "cloud_sync":if self.backup_storage.as_ref().is_some_and(|adapter| adapter.is_cloud()) {"api_key_http"} else {"not_configured"},
-            "backup":backup_adapter,
             "audit_export":"local_json",
             "storage":storage,
             "embedding":embedding
@@ -1780,8 +1693,6 @@ pub fn report_namespaces(
              UNION SELECT account_id, agent_id, memory_space_id FROM session_summaries
              UNION SELECT account_id, agent_id, memory_space_id FROM long_term_memories
              UNION SELECT account_id, agent_id, memory_space_id FROM instructions
-             UNION SELECT account_id, agent_id, memory_space_id FROM backup_catalog
-                WHERE memory_space_id IS NOT NULL
          )
          SELECT namespaces.account_id, namespaces.agent_id, namespaces.memory_space_id,
                 {}, {}, {}, {}, {},
@@ -1998,15 +1909,14 @@ fn is_audited_read(method: &str) -> bool {
             | "privacy.export_data"
             | "audit.list"
             | "audit.export"
-            | "backup.list"
-            | "backup.preview_restore"
     )
 }
 
 fn is_memory_data_method(method: &str) -> bool {
     matches!(
         method,
-        "instructions.put"
+        "privacy.import_data"
+            | "instructions.put"
             | "instructions.list"
             | "instructions.revise"
             | "sessions.append_event"
@@ -2024,11 +1934,6 @@ fn is_memory_data_method(method: &str) -> bool {
             | "projection.resolve"
             | "projection.list_dead"
             | "projection.requeue_dead"
-            | "backup.create"
-            | "backup.run_scheduled"
-            | "backup.list"
-            | "backup.preview_restore"
-            | "backup.restore"
     )
 }
 
@@ -2038,9 +1943,8 @@ fn is_mandatory_audit_action(action: &str) -> bool {
         "long_term.forget"
             | "privacy.clear_history"
             | "privacy.clear_all"
+            | "privacy.import_data"
             | "privacy.settings.update"
-            | "backup.create"
-            | "backup.restore"
             | "projection.requeue_dead"
             | "long_term.reconcile_slots"
     )

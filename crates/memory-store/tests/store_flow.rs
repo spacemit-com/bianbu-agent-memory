@@ -1,6 +1,6 @@
 use memory_core::{capability, MemoryIdentity, PROTOCOL_VERSION};
 use memory_protocol::RequestEnvelope;
-use memory_store::{migrate_plaintext_database, report_namespaces, HttpBackupStorage, Store};
+use memory_store::{migrate_plaintext_database, report_namespaces, Store};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -53,343 +53,6 @@ fn wait_for_settle_window() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(3_000);
     thread::sleep(std::time::Duration::from_millis(settle_ms as u64 + 250));
-}
-
-#[test]
-fn capsule_backup_requires_login_consent_and_restores_with_tombstones() {
-    let directory = TempDir::new().unwrap();
-    let backup_directory = directory.path().join("capsules");
-    let store = Store::open_with_backup(
-        directory.path().join("memory.db"),
-        None,
-        &backup_directory,
-        &[0x42_u8; 32],
-    )
-    .unwrap();
-    let mut owner = identity();
-    owner.account_id = "spacemit:test-account".to_owned();
-
-    store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({
-                    "backup_enabled":true,
-                    "backup_frequency":"weekly",
-                    "backup_scopes":["preferences","development_habits"]
-                }),
-                "enable-backup",
-            ),
-            false,
-        )
-        .unwrap();
-    let memory = store
-        .handle(
-            &owner,
-            &request(
-                "long_term.put",
-                json!({
-                    "kind":"preference",
-                    "text":"默认使用 uv 管理 Python 依赖",
-                    "tags":["slot:development.package_manager"],
-                    "sync_policy":"account_agent"
-                }),
-                "backup-memory",
-            ),
-            false,
-        )
-        .unwrap();
-    let backup = store
-        .handle(
-            &owner,
-            &request(
-                "backup.create",
-                json!({"scopes":["preferences","development_habits"]}),
-                "backup-create",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(backup["state"], "completed");
-    let repeated_backup = store
-        .handle(
-            &owner,
-            &request(
-                "backup.create",
-                json!({"scopes":["preferences","development_habits"]}),
-                "backup-create",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(backup["backup_id"], repeated_backup["backup_id"]);
-    assert!(backup_directory
-        .join(format!("{}.capsule", backup["backup_id"].as_str().unwrap()))
-        .is_file());
-    let envelope: Value = serde_json::from_slice(
-        &std::fs::read(
-            backup_directory.join(format!("{}.capsule", backup["backup_id"].as_str().unwrap())),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(envelope["agent_name"], owner.agent_name);
-    assert_eq!(
-        std::fs::read_dir(&backup_directory).unwrap().count(),
-        1,
-        "an idempotent create must not write a second Capsule"
-    );
-    let scheduled = store
-        .handle(
-            &owner,
-            &request("backup.run_scheduled", json!({}), "scheduled-backup-check"),
-            false,
-        )
-        .unwrap();
-    assert_eq!(scheduled["state"], "not_due");
-    assert_eq!(scheduled["frequency"], "weekly");
-    assert!(scheduled["next_due_at"].as_i64().is_some());
-    let listed = store
-        .handle(
-            &owner,
-            &request("backup.list", json!({"limit":10}), "backup-list"),
-            false,
-        )
-        .unwrap();
-    assert_eq!(listed.as_array().unwrap().len(), 1);
-    let preview = store
-        .handle(
-            &owner,
-            &request(
-                "backup.preview_restore",
-                json!({"backup_id":backup["backup_id"]}),
-                "backup-preview",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(preview["changes"]["unchanged"], 1);
-
-    store
-        .handle(
-            &owner,
-            &request(
-                "long_term.forget",
-                json!({"memory_id":memory["memory_id"],"confirm_token":"verified","reason_code":"test"}),
-                "backup-forget",
-            ),
-            true,
-        )
-        .unwrap();
-    let restored = store
-        .handle(
-            &owner,
-            &request(
-                "backup.restore",
-                json!({"backup_id":backup["backup_id"],"confirm_token":"verified"}),
-                "backup-restore",
-            ),
-            true,
-        )
-        .unwrap();
-    assert_eq!(restored["state"], "completed");
-    let fetched = store
-        .handle(
-            &owner,
-            &request(
-                "long_term.get_many",
-                json!({"memory_ids":[memory["memory_id"].clone()]}),
-                "backup-fetch",
-            ),
-            false,
-        )
-        .unwrap();
-    assert!(fetched.as_array().unwrap().is_empty());
-}
-
-#[test]
-fn legacy_summaries_scope_is_converged_and_never_leaves_the_device() {
-    let directory = TempDir::new().unwrap();
-    let backup_directory = directory.path().join("capsules");
-    let database = directory.path().join("memory.db");
-    let store =
-        Store::open_with_backup(&database, None, &backup_directory, &[0x24_u8; 32]).unwrap();
-    let mut owner = identity();
-    owner.account_id = "spacemit:summary-scope".to_owned();
-
-    // One L2 summary: exactly the text a Capsule used to be able to upload
-    // through the `summaries` scope.
-    for turn in 1..=5 {
-        for (role, event_type) in [("user", "user_message"), ("assistant", "assistant_message")] {
-            store
-                .handle(
-                    &owner,
-                    &request(
-                        "sessions.append_event",
-                        json!({
-                            "session_id":"legacy-scope-session","event_type":event_type,
-                            "payload":{"role":role,"run_id":format!("legacy-scope-run-{turn}"),
-                                "text":format!("legacy scope detail {turn} {role}")}
-                        }),
-                        &format!("legacy-scope-{turn}-{role}"),
-                    ),
-                    false,
-                )
-                .unwrap();
-        }
-    }
-    store
-        .handle(
-            &owner,
-            &request(
-                "sessions.summarize",
-                json!({"session_id":"legacy-scope-session"}),
-                "legacy-scope-summary",
-            ),
-            false,
-        )
-        .unwrap();
-
-    // The row a 0.1.15 device persisted: cloud backup on with the old
-    // four-scope default, `summaries` included.
-    let connection = Connection::open(&database).unwrap();
-    connection
-        .execute(
-            "INSERT INTO memory_settings(account_id,agent_id,memory_space_id,memory_enabled,
-                retention_days,audit_enabled,backup_enabled,backup_frequency,backup_scopes_json,
-                updated_at)
-             VALUES(?1,?2,?3,1,NULL,1,1,'weekly',?4,1)",
-            params![
-                owner.account_id,
-                owner.agent_id,
-                owner.memory_space_id,
-                r#"["summaries","preferences","development_habits","schedule_habits"]"#
-            ],
-        )
-        .unwrap();
-    drop(connection);
-
-    // 1. Nobody can request the retired scope any more, on either entry point.
-    let create_error = store
-        .handle(
-            &owner,
-            &request(
-                "backup.create",
-                json!({"scopes":["summaries"]}),
-                "legacy-scope-create",
-            ),
-            false,
-        )
-        .unwrap_err();
-    assert_eq!(create_error.code, "InvalidArgument");
-    let update_error = store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({"backup_scopes":["summaries"]}),
-                "legacy-scope-update",
-            ),
-            false,
-        )
-        .unwrap_err();
-    assert_eq!(update_error.code, "InvalidArgument");
-
-    // 2. The stored legacy value converges on read instead of failing validation.
-    let settings = store
-        .handle(
-            &owner,
-            &request("privacy.settings.get", json!({}), "legacy-scope-settings"),
-            false,
-        )
-        .unwrap();
-    assert_eq!(
-        settings["backup_scopes"],
-        json!(["preferences", "development_habits", "schedule_habits"])
-    );
-
-    // 3. The scheduled worker still runs (no background error) and its Capsule
-    //    carries no L2 summary even though the device holds one.
-    let scheduled = store
-        .handle(
-            &owner,
-            &request(
-                "backup.run_scheduled",
-                json!({"force":true}),
-                "legacy-scope-scheduled",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(scheduled["state"], "completed");
-    assert_eq!(scheduled["scheduled"], true);
-    let preview = store
-        .handle(
-            &owner,
-            &request(
-                "backup.preview_restore",
-                json!({"backup_id":scheduled["backup_id"]}),
-                "legacy-scope-preview",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(
-        preview["manifest"]["scopes"],
-        json!(["preferences", "development_habits", "schedule_habits"]),
-        "the Capsule manifest must record only the converged scopes"
-    );
-    assert_eq!(
-        preview["changes"]["summaries_add"], 0,
-        "a Capsule must not carry L2 conversation summaries (MEM-L4-02)"
-    );
-
-    // 4. Any later settings write also converges the persisted row.
-    store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({"audit_enabled":true}),
-                "legacy-scope-converge",
-            ),
-            false,
-        )
-        .unwrap();
-    let stored: String = Connection::open(&database)
-        .unwrap()
-        .query_row(
-            "SELECT backup_scopes_json FROM memory_settings
-             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3",
-            params![owner.account_id, owner.agent_id, owner.memory_space_id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(
-        stored,
-        r#"["preferences","development_habits","schedule_habits"]"#
-    );
-}
-
-#[test]
-fn default_account_cannot_enable_backup() {
-    let directory = TempDir::new().unwrap();
-    let store = Store::open(directory.path().join("memory.db")).unwrap();
-    let mut owner = identity();
-    owner.account_id = "default".to_owned();
-    let error = store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({"backup_enabled":true}),
-                "default-backup-enable",
-            ),
-            false,
-        )
-        .unwrap_err();
-    assert_eq!(error.code, "Unauthenticated");
 }
 
 #[test]
@@ -632,18 +295,11 @@ fn legacy_development_account_migrates_to_default_without_data_loss() {
                 [],
             )
             .unwrap();
-        connection
-            .execute(
-                "INSERT INTO backup_jobs(
-                    job_id,account_id,agent_id,job_type,state,progress,created_at,updated_at
-                 ) VALUES('legacy-backup','local:uid:1000','agent','scheduled','pending',0,1,1)",
-                [],
-            )
-            .unwrap();
     }
     let migration = store.migrate_development_account_to_default(1000).unwrap();
     assert_eq!(migration["state"], "migrated");
-    assert_eq!(migration["discarded_cloud_rows"], 4);
+    // outbox holds two rows (legacy account + default), sync_jobs one.
+    assert_eq!(migration["discarded_cloud_rows"], 3);
 
     let mut current = legacy;
     current.account_id = "default".to_owned();
@@ -667,8 +323,6 @@ fn legacy_development_account_migrates_to_default_without_data_loss() {
         "sync_cursors",
         "sync_conflicts",
         "sync_jobs",
-        "backup_jobs",
-        "backup_catalog",
     ] {
         let count: i64 = connection
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -677,27 +331,6 @@ fn legacy_development_account_migrates_to_default_without_data_loss() {
             .unwrap();
         assert_eq!(count, 0, "{table} must be empty after local migration");
     }
-}
-
-#[test]
-fn scheduled_backup_skips_the_default_account() {
-    let directory = TempDir::new().unwrap();
-    let store = Store::open(directory.path().join("memory.db")).unwrap();
-    let mut owner = identity();
-    owner.account_id = "default".to_owned();
-    let result = store
-        .handle(
-            &owner,
-            &request(
-                "backup.run_scheduled",
-                json!({}),
-                "default-scheduled-backup",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(result["state"], "skipped");
-    assert_eq!(result["reason"], "account_not_authenticated");
 }
 
 #[test]
@@ -755,70 +388,14 @@ fn background_worker_runs_maintenance_and_persists_its_schedule() {
             |row| row.get(0),
         )
         .unwrap();
-    // maintenance + backup + embedding + lexical job schedules are persisted
-    // per namespace
+    // summary + maintenance + embedding + lexical schedules are persisted per
+    // namespace
     assert_eq!(states, 4);
     drop(connection);
 
     let second = store.run_background_jobs("k3-background").unwrap();
     assert_eq!(second["attempted"], 0);
     assert!(second["deferred"].as_i64().unwrap() >= 2);
-}
-
-#[test]
-fn background_worker_respects_the_memory_disable_switch_for_backup() {
-    let directory = TempDir::new().unwrap();
-    let database = directory.path().join("memory.db");
-    let backup_directory = directory.path().join("capsules");
-    let store =
-        Store::open_with_backup(&database, None, &backup_directory, &[0x22_u8; 32]).unwrap();
-    let mut owner = identity();
-    owner.account_id = "spacemit:background-account".to_owned();
-    store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({
-                    "memory_enabled":false,
-                    "backup_enabled":true,
-                    "backup_scopes":["preferences"]
-                }),
-                "background-disabled-settings",
-            ),
-            false,
-        )
-        .unwrap();
-    let result = store.run_background_jobs("k3-background").unwrap();
-    assert!(result["results"].as_array().unwrap().iter().any(|item| {
-        item["job_kind"] == "backup" && item["result"]["reason"] == "memory_disabled"
-    }));
-    assert_eq!(
-        std::fs::read_dir(&backup_directory)
-            .map(|entries| entries.count())
-            .unwrap_or(0),
-        0
-    );
-}
-
-#[test]
-fn authenticated_account_cannot_enable_backup_without_key_and_storage_adapter() {
-    let directory = TempDir::new().unwrap();
-    let store = Store::open(directory.path().join("memory.db")).unwrap();
-    let mut owner = identity();
-    owner.account_id = "spacemit:test-account".to_owned();
-    let error = store
-        .handle(
-            &owner,
-            &request(
-                "privacy.settings.update",
-                json!({"backup_enabled":true}),
-                "missing-backup-adapter",
-            ),
-            false,
-        )
-        .unwrap_err();
-    assert_eq!(error.code, "BackupUnavailable");
 }
 
 #[test]
@@ -1421,7 +998,7 @@ fn version_one_database_is_upgraded_without_losing_session_events() {
             false,
         )
         .unwrap();
-    assert_eq!(health["schema_version"], 13);
+    assert_eq!(health["schema_version"], 14);
 
     let event = store
         .handle(
@@ -1527,7 +1104,7 @@ fn version_five_database_hardens_legacy_profile_projection() {
         )
         .unwrap();
 
-    assert_eq!(schema, 13);
+    assert_eq!(schema, 14);
     assert_eq!(sensitivity, "sensitive");
     assert_eq!(mapping_state, "delete_proposed");
 }
@@ -3479,8 +3056,8 @@ fn retention_tightening_caps_stored_rows_and_maintenance_purges_them() {
     let store = Store::open(&database).unwrap();
     let owner = identity();
 
-    // The settings view advertises cloud backup only when a cloud adapter is
-    // configured; Store::open assembles none.
+    // Cloud backup is retired: the settings view must not advertise a toggle
+    // or a destination (product change 2026-10-16).
     let defaults = store
         .handle(
             &owner,
@@ -3488,7 +3065,8 @@ fn retention_tightening_caps_stored_rows_and_maintenance_purges_them() {
             false,
         )
         .unwrap();
-    assert_eq!(defaults["backup_supported"], false);
+    assert!(defaults.get("backup_supported").is_none());
+    assert!(defaults.get("backup_enabled").is_none());
 
     // Permanent baseline: a fact, an instruction, and a session event, plus
     // a memory carrying an explicit 7-day expiry that must survive the cap.
@@ -3684,50 +3262,6 @@ fn retention_tightening_caps_stored_rows_and_maintenance_purges_them() {
         .unwrap();
     assert_eq!(untouched, explicit_expiry);
     drop(connection);
-}
-
-#[test]
-fn backup_supported_reports_cloud_adapters_only() {
-    // Production debs always start memoryd with --backup-directory (a local
-    // capsule store), so the settings view must key the cloud-backup signal
-    // off the adapter kind, not off backup presence: a local directory must
-    // not light up controls that can only upload to the cloud service.
-    let directory = TempDir::new().unwrap();
-    let owner = identity();
-
-    let local = Store::open_with_backup(
-        directory.path().join("local.db"),
-        None,
-        directory.path().join("capsules"),
-        &[0x33_u8; 32],
-    )
-    .unwrap();
-    let local_view = local
-        .handle(
-            &owner,
-            &request("privacy.settings.get", json!({}), "backup-supported-local"),
-            false,
-        )
-        .unwrap();
-    assert_eq!(local_view["backup_supported"], false);
-
-    let cloud = Store::open_with_backup_adapter(
-        directory.path().join("cloud.db"),
-        None,
-        Arc::new(
-            HttpBackupStorage::new("https://backup.example.test", "test-api-key").unwrap(),
-        ),
-        &[0x44_u8; 32],
-    )
-    .unwrap();
-    let cloud_view = cloud
-        .handle(
-            &owner,
-            &request("privacy.settings.get", json!({}), "backup-supported-cloud"),
-            false,
-        )
-        .unwrap();
-    assert_eq!(cloud_view["backup_supported"], true);
 }
 
 #[test]
@@ -5336,185 +4870,416 @@ fn archived_summary_records_the_event_sequences_it_was_built_from() {
 }
 
 #[test]
-fn important_scope_migration_widens_only_untouched_shipped_defaults() {
-    // The migration must extend a device that still holds a shipped default and
-    // must never widen a list that was chosen deliberately: adding an upload
-    // category to an account that already enabled backup is not ours to decide.
-    let connection = Connection::open_in_memory().unwrap();
-    connection
-        .execute_batch(
-            "CREATE TABLE memory_settings(
-                account_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                memory_space_id TEXT NOT NULL,
-                backup_scopes_json TEXT NOT NULL
-            );",
-        )
-        .unwrap();
-    let seeds = [
-        (
-            "shipped-default",
-            r#"["preferences","development_habits","schedule_habits"]"#,
-        ),
-        (
-            "pre-0.1.16",
-            r#"["summaries","preferences","development_habits","schedule_habits"]"#,
-        ),
-        ("custom-subset", r#"["preferences"]"#),
-        (
-            "already-widened",
-            r#"["preferences","development_habits","schedule_habits","important"]"#,
-        ),
-    ];
-    for (name, scopes) in seeds {
-        connection
-            .execute(
-                "INSERT INTO memory_settings(account_id,agent_id,memory_space_id,backup_scopes_json)
-                 VALUES(?1,'agent','space',?2)",
-                params![name, scopes],
-            )
-            .unwrap();
-    }
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0013_add_important_backup_scope.sql"
-        ))
-        .unwrap();
-    let scopes_of = |name: &str| -> String {
-        connection
-            .query_row(
-                "SELECT backup_scopes_json FROM memory_settings WHERE account_id=?1",
-                params![name],
-                |row| row.get(0),
-            )
-            .unwrap()
-    };
-    let widened = r#"["preferences","development_habits","schedule_habits","important"]"#;
-    assert_eq!(scopes_of("shipped-default"), widened);
-    assert_eq!(scopes_of("pre-0.1.16"), widened);
-    assert_eq!(scopes_of("custom-subset"), r#"["preferences"]"#);
-    assert_eq!(scopes_of("already-widened"), widened);
-}
-
-#[test]
-fn important_mark_is_its_own_backup_scope_end_to_end() {
-    // `important` is orthogonal to `kind`: a marked `fact` matches none of the
-    // three content scopes, so without a scope of its own it would be silently
-    // dropped from every Capsule. This is the end-to-end proof that a marked
-    // record does travel, and that an unselected scope still keeps it out.
+fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
     let directory = TempDir::new().unwrap();
-    let backup_directory = directory.path().join("capsules");
-    let store = Store::open_with_backup(
-        directory.path().join("memory.db"),
-        None,
-        &backup_directory,
-        &[0x31_u8; 32],
-    )
-    .unwrap();
-    let mut owner = identity();
-    owner.account_id = "spacemit:important-scope".to_owned();
+    let store = Store::open(directory.path().join("memory.db")).unwrap();
+    let owner = identity();
+
     store
         .handle(
             &owner,
             &request(
-                "privacy.settings.update",
+                "sessions.append_event",
                 json!({
-                    "backup_enabled":true,
-                    "backup_frequency":"weekly",
-                    "backup_scopes":["preferences","important"]
+                    "session_id":"session-import",
+                    "event_type":"user_message",
+                    "payload":{"text":"remember that the build uses ninja"}
                 }),
-                "important-enable",
+                "import-event",
             ),
             false,
         )
         .unwrap();
-    let marked = store
+    let memory_id = store
         .handle(
             &owner,
             &request(
                 "long_term.put",
                 json!({
-                    "kind":"fact",
-                    "text":"重要标记：机房断电演练固定在每周三凌晨",
+                    "kind":"preference",
+                    "text":"We build with ninja on the K3 board",
                     "tags":["important"],
-                    "sync_policy":"account_agent"
+                    "sync_policy":"local_only"
                 }),
-                "important-put-marked",
+                "import-memory",
             ),
             false,
         )
-        .unwrap();
-    let plain = store
+        .unwrap()["memory_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
         .handle(
             &owner,
             &request(
-                "long_term.put",
+                "sessions.update_summary",
                 json!({
-                    "kind":"fact",
-                    "text":"普通事实：排班表放在共享盘",
-                    "sync_policy":"account_agent"
+                    "session_id":"session-import",
+                    "patch":{"current_status":"imported"},
+                    "source_event_sequence":1,
+                    "expected_revision":0
                 }),
-                "important-put-plain",
+                "import-summary",
             ),
             false,
         )
         .unwrap();
-    assert_ne!(marked["memory_id"], plain["memory_id"]);
 
-    let capsule = store
+    let exported = store
         .handle(
             &owner,
             &request(
-                "backup.create",
-                json!({"scopes":["important"]}),
-                "important-create",
+                "privacy.export_data",
+                json!({"limit_per_collection":500,"include_audit":false}),
+                "import-export",
             ),
             false,
         )
         .unwrap();
-    assert_eq!(capsule["state"], "completed");
-    let preview = store
-        .handle(
-            &owner,
-            &request(
-                "backup.preview_restore",
-                json!({"backup_id":capsule["backup_id"]}),
-                "important-preview",
-            ),
-            false,
-        )
-        .unwrap();
-    assert_eq!(
-        preview["changes"]["unchanged"], 1,
-        "only the important-marked record travels under the important scope"
-    );
-    assert_eq!(preview["manifest"]["scopes"], json!(["important"]));
+    assert_eq!(exported["session_events"].as_array().unwrap().len(), 1);
+    assert_eq!(exported["session_summaries"].as_array().unwrap().len(), 1);
+    assert_eq!(exported["long_term_memories"].as_array().unwrap().len(), 1);
 
-    // An unselected scope must still keep the mark out of the Capsule.
-    let without = store
+    store
         .handle(
             &owner,
             &request(
-                "backup.create",
-                json!({"scopes":["preferences"]}),
-                "important-create-preferences",
+                "privacy.clear_all",
+                json!({"confirm_token":"confirmed","reason_code":"user_request"}),
+                "import-clear",
+            ),
+            true,
+        )
+        .unwrap();
+    let cleared = store
+        .handle(
+            &owner,
+            &request("system.stats", json!({}), "import-stats-cleared"),
+            false,
+        )
+        .unwrap();
+    assert_eq!(cleared["long_term_memories"], 0);
+
+    let restored = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.import_data",
+                json!({"payload":exported,"confirm_token":"confirmed"}),
+                "import-restore",
+            ),
+            true,
+        )
+        .unwrap();
+    assert_eq!(restored["imported"]["session_events"], 1);
+    assert_eq!(restored["imported"]["session_summaries"], 1);
+    assert_eq!(restored["imported"]["long_term_memories"], 1);
+    assert_eq!(restored["skipped"]["long_term_memories"], 0);
+
+    let recalled = store
+        .handle(
+            &owner,
+            &request(
+                "long_term.get_many",
+                json!({"memory_ids":[memory_id]}),
+                "import-recall",
             ),
             false,
         )
         .unwrap();
-    let preview_without = store
+    let record = &recalled[0];
+    assert_eq!(record["text"], "We build with ninja on the K3 board");
+    assert_eq!(record["tags"][0], "important");
+
+    // Re-importing the same document is a no-op: every record already exists,
+    // so nothing is duplicated and every record is reported as skipped.
+    let repeated = store
         .handle(
             &owner,
             &request(
-                "backup.preview_restore",
-                json!({"backup_id":without["backup_id"]}),
-                "important-preview-preferences",
+                "privacy.import_data",
+                json!({"payload":exported,"confirm_token":"confirmed"}),
+                "import-repeat",
+            ),
+            true,
+        )
+        .unwrap();
+    assert_eq!(repeated["imported"]["session_events"], 0);
+    assert_eq!(repeated["imported"]["long_term_memories"], 0);
+    assert_eq!(repeated["skipped"]["session_events"], 1);
+    assert_eq!(repeated["skipped"]["session_summaries"], 1);
+    assert_eq!(repeated["skipped"]["long_term_memories"], 1);
+    let stats = store
+        .handle(
+            &owner,
+            &request("system.stats", json!({}), "import-stats"),
+            false,
+        )
+        .unwrap();
+    assert_eq!(stats["long_term_memories"], 1);
+    assert_eq!(stats["session_events"], 1);
+}
+
+#[test]
+fn import_rejects_foreign_documents_and_requires_a_confirmation_token() {
+    let directory = TempDir::new().unwrap();
+    let store = Store::open(directory.path().join("memory.db")).unwrap();
+    let owner = identity();
+
+    let unconfirmed = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.import_data",
+                json!({"payload":{"format":"bianbu-agent-memory.export.v1"}}),
+                "import-unconfirmed",
+            ),
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(unconfirmed.code, "PermissionDenied");
+
+    let wrong_format = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.import_data",
+                json!({"payload":{"format":"something.else.v1"},"confirm_token":"confirmed"}),
+                "import-wrong-format",
+            ),
+            true,
+        )
+        .unwrap_err();
+    assert_eq!(wrong_format.code, "InvalidArgument");
+
+    let foreign_scope = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.import_data",
+                json!({
+                    "payload":{
+                        "format":"bianbu-agent-memory.export.v1",
+                        "scope":{
+                            "account_id":"local:test",
+                            "agent_id":"io.bianbu.other",
+                            "memory_space_id":"test-space"
+                        }
+                    },
+                    "confirm_token":"confirmed"
+                }),
+                "import-foreign-scope",
+            ),
+            true,
+        )
+        .unwrap_err();
+    assert_eq!(foreign_scope.code, "InvalidArgument");
+}
+
+#[test]
+fn export_pages_cover_more_than_500_events_without_truncation() {
+    let directory = TempDir::new().unwrap();
+    let store = Store::open(directory.path().join("memory.db")).unwrap();
+    let owner = identity();
+    for index in 0..501 {
+        store
+            .handle(
+                &owner,
+                &request(
+                    "sessions.append_event",
+                    json!({
+                        "session_id":"export-session",
+                        "event_type":"user_message",
+                        "payload":{"text":format!("export event {index}")}
+                    }),
+                    &format!("export-event-{index}"),
+                ),
+                false,
+            )
+            .unwrap();
+    }
+
+    let mut page = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({"limit_per_collection":500,"include_audit":false}),
+                "export-page-1",
             ),
             false,
         )
         .unwrap();
-    assert_eq!(
-        preview_without["changes"]["unchanged"], 0,
-        "a marked record must not ride along with an unselected scope"
-    );
+    assert_eq!(page["session_events"].as_array().unwrap().len(), 500);
+    assert_eq!(page["has_more"]["session_events"], true);
+    assert_eq!(page["has_more_any"], true);
+
+    let snapshot_at = page["snapshot_at"].as_i64().unwrap();
+    let cursor = page["next_cursor"].clone();
+    page = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({
+                    "limit_per_collection":500,
+                    "include_audit":false,
+                    "snapshot_at":snapshot_at,
+                    "cursor":cursor
+                }),
+                "export-page-2",
+            ),
+            false,
+        )
+        .unwrap();
+    assert_eq!(page["session_events"].as_array().unwrap().len(), 1);
+    assert_eq!(page["has_more"]["session_events"], false);
+    assert_eq!(page["has_more_any"], false);
+}
+
+#[test]
+fn export_snapshot_excludes_events_written_after_the_first_page() {
+    let directory = TempDir::new().unwrap();
+    let store = Store::open(directory.path().join("memory.db")).unwrap();
+    let owner = identity();
+    for index in 0..3 {
+        store
+            .handle(
+                &owner,
+                &request(
+                    "sessions.append_event",
+                    json!({
+                        "session_id":"snapshot-session",
+                        "event_type":"user_message",
+                        "payload":{"text":format!("before {index}")}
+                    }),
+                    &format!("snapshot-before-{index}"),
+                ),
+                false,
+            )
+            .unwrap();
+    }
+    let first = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({"limit_per_collection":2,"include_audit":false}),
+                "snapshot-page-1",
+            ),
+            false,
+        )
+        .unwrap();
+    store
+        .handle(
+            &owner,
+            &request(
+                "sessions.append_event",
+                json!({
+                    "session_id":"snapshot-session",
+                    "event_type":"user_message",
+                    "payload":{"text":"written during export"}
+                }),
+                "snapshot-during",
+            ),
+            false,
+        )
+        .unwrap();
+    let second = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({
+                    "limit_per_collection":2,
+                    "include_audit":false,
+                    "snapshot_at":first["snapshot_at"],
+                    "cursor":first["next_cursor"]
+                }),
+                "snapshot-page-2",
+            ),
+            false,
+        )
+        .unwrap();
+    let mut ids = first["session_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(second["session_events"].as_array().unwrap())
+        .map(|row| row["event_id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 3);
+}
+
+#[test]
+fn export_snapshot_is_per_collection_not_one_global_rowid() {
+    let directory = TempDir::new().unwrap();
+    let store = Store::open(directory.path().join("memory.db")).unwrap();
+    let owner = identity();
+    for index in 0..2 {
+        store
+            .handle(
+                &owner,
+                &request(
+                    "sessions.append_event",
+                    json!({
+                        "session_id":"per-collection-session",
+                        "event_type":"user_message",
+                        "payload":{"text":format!("event {index}")}
+                    }),
+                    &format!("per-collection-event-{index}"),
+                ),
+                false,
+            )
+            .unwrap();
+    }
+    let first = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({"limit_per_collection":1,"include_audit":false}),
+                "per-collection-page-1",
+            ),
+            false,
+        )
+        .unwrap();
+    // A summary written after page 1 must not leak into page 2 even though its
+    // rowid is below the max rowid of the event table.
+    store
+        .handle(
+            &owner,
+            &request(
+                "sessions.update_summary",
+                json!({
+                    "session_id":"per-collection-session",
+                    "patch":{"current_status":"done"},
+                    "source_event_sequence":1,
+                    "expected_revision":0
+                }),
+                "per-collection-summary",
+            ),
+            false,
+        )
+        .unwrap();
+    let second = store
+        .handle(
+            &owner,
+            &request(
+                "privacy.export_data",
+                json!({
+                    "limit_per_collection":1,
+                    "include_audit":false,
+                    "snapshot":first["snapshot"],
+                    "cursor":first["next_cursor"]
+                }),
+                "per-collection-page-2",
+            ),
+            false,
+        )
+        .unwrap();
+    assert_eq!(second["session_summaries"].as_array().unwrap().len(), 0);
 }

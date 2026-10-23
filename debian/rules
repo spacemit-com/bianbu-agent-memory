@@ -31,6 +31,7 @@ override_dh_auto_install:
 	install -D -m 0755 packaging/bianbu-agent-memory-embedding-provision debian/bianbu-agent-memoryd/usr/libexec/bianbu-agent-memory-embedding-provision
 	install -D -m 0644 tests/data/embedding_parity_golden.json debian/bianbu-agent-memoryd/usr/share/bianbu-agent-memoryd/embedding_parity_golden.json
 	install -D -m 0644 README.md debian/bianbu-agent-memoryd/usr/share/doc/bianbu-agent-memoryd/README.md
+	install -D -m 0644 README_CN.md debian/bianbu-agent-memoryd/usr/share/doc/bianbu-agent-memoryd/README_CN.md
 	install -D -m 0644 docs/GATEWAY_EMBEDDING_INTEGRATION.md debian/bianbu-agent-memoryd/usr/share/doc/bianbu-agent-memoryd/GATEWAY_EMBEDDING_INTEGRATION.md
 	install -D -m 0644 packaging/bianbu-agent-memoryd.tmpfiles debian/bianbu-agent-memoryd/usr/lib/tmpfiles.d/bianbu-agent-memoryd.conf
 	install -D -m 0644 packaging/com.bianbu.AgentMemory1.conf debian/bianbu-agent-memoryd/usr/share/dbus-1/system.d/com.bianbu.AgentMemory1.conf
@@ -45,6 +46,7 @@ override_dh_auto_install:
 	install -D -m 0644 packaging/bianbu-agent-memory-adapter.service.d/10-loopback.conf debian/bianbu-agent-memory/lib/systemd/system/bianbu-agent-memory-adapter.service.d/10-loopback.conf
 	install -D -m 0644 sdk/python/pyproject.toml debian/bianbu-agent-memory/usr/share/doc/bianbu-agent-memory/pyproject.toml
 	install -D -m 0644 README.md debian/bianbu-agent-memory/usr/share/doc/bianbu-agent-memory/README.md
+	install -D -m 0644 README_CN.md debian/bianbu-agent-memory/usr/share/doc/bianbu-agent-memory/README_CN.md
 
 override_dh_dwz:
 

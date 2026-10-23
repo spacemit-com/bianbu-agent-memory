@@ -83,7 +83,7 @@ python -m compileall -q sdk/python/src scripts weather_memory_demo
 | AUTO-PY-05 | Mem0 规则 Planner | ADD/UPDATE/NONE、重复合并、问题句和标题过滤 | 只从明确陈述抽取，查询不产生记忆 | 已验证 |
 | AUTO-PY-06 | D+ 投影 | Mem0/Qdrant 映射、canonical 回表、重建、死信重试 | 派生索引可重建，结果始终回 canonical | 已验证 |
 | AUTO-PY-07 | OAuth2 客户端契约 | HTTPS、授权码、token、userinfo、业务错误 | 合同错误被识别，`client_secret` 不进入请求体 | 已验证（协议客户端；不代表生产云认证完成） |
-| AUTO-PY-08 | API-Key Backup Adapter | 加密 Capsule 上传/下载/删除、对象引用、SHA-256 | Mock/本地 HTTP 契约通过 | 已验证（不代表真实云服务完成） |
+| AUTO-PY-08 | 云备份（已退役） | 2026-10-16 起 `backup.*` 不在本分支 | 调用返回 `NotFound`；实现保留在 `feature/mem-l4-cloud-backup` | 已退役 |
 | AUTO-PY-09 | 中文指代金标集结构 | `tests/data/chinese_coreference_goldset.jsonl` | 字段、类别和覆盖面校验通过 | 已验证（真实模型准确率另测） |
 | AUTO-PY-10 | Hermes 生命周期适配 | MemoryProvider 连接、写入和读取 | Hermes smoke 返回成功 | 已验证 |
 
@@ -193,10 +193,10 @@ SOCKET=/tmp/agent-memory-test.xxxxxx/memoryd.sock
 | 编号 | 用例 | 步骤 | 预期结果 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | SEC-01 | SQLCipher 拒绝明文 | 用普通 SQLite 打开加密 `memory.db` | 查询 schema 失败；不得泄露明文 | 已验证 |
-| SEC-02 | Secret 权限 | 检查 `account-secret`、`memory.keypkg`、Capsule key 和配置文件 | Secret/key/config 为最小权限，测试基线为 `0600` | 已验证（仍需生产安全复核） |
+| SEC-02 | Secret 权限 | 检查 `account-secret`、`memory.keypkg` 和配置文件（Capsule key 已随云备份退役） | Secret/key/config 为最小权限，测试基线为 `0600` | 已验证（仍需生产安全复核） |
 | SEC-03 | 凭证过滤 | 输入 password/token/API key/private key 文本 | 不进入 L3、摘要、D+、普通日志或审计详情 | 已验证 |
 | SEC-04 | PII 边界 | 输入姓名、电话、邮箱、地址 | 仅允许加密 canonical 路径；不进入语义投影 | 已验证 |
-| SEC-05 | 明文迁移 | 停止 daemon，执行 `--migrate-plaintext`，检查 staging/sidecar/backup；再跑 `scripts/k3_plaintext_replica_sweep.py` 扫全盘明文副本 | 生成加密库；暂存文件可清理；回滚副本默认保留且为 `0600`；全盘无明文 `memory.db*` 与明文导出 | 已验证（K3 历史副本已现场清理，见 §4.3） |
+| SEC-05 | 明文迁移 | 停止 daemon，执行 `--migrate-plaintext`，检查 staging/sidecar/backup；再跑 `scripts/k3_plaintext_replica_sweep.py` 扫全盘明文副本 | 生成加密库；暂存文件可清理；回滚副本默认保留且为 `0600`；全盘无明文 `memory.db*` 与明文导出 | 已验证（K3 历史副本已现场清理，见 §4.4） |
 | SEC-06 | 精确清理 | 执行 `--cleanup-plaintext-backups` 和 `--cleanup-migration-temporaries` | 只删除当前数据库关联的目标文件，不删除无关文件 | 已验证 |
 | SEC-07 | ACL | `getfacl /run/bianbu /run/bianbu/agent-runtime` | Runtime/Memory 具备所需最小访问，owner/mask 不被错误放宽 | 已验证基础 ACL |
 | SEC-08 | 清除历史 | 使用正确 confirm token 调用 `privacy.clear_history` | L1/L2/Session checkpoint 清除，L3 保留，并写审计 |
@@ -207,14 +207,32 @@ SOCKET=/tmp/agent-memory-test.xxxxxx/memoryd.sock
 
 | 编号 | 用例 | 步骤 | 预期结果 |
 | --- | --- | --- | --- |
-| CFG-01 | 默认配置 | `privacy.settings.get` | memory/audit 默认开启，永久保留 wire 值为 `retention_days=0`，云备份关闭 |
+| CFG-01 | 默认配置 | `privacy.settings.get` | memory/audit 默认开启，永久保留 wire 值为 `retention_days=0`；响应不含任何 `backup_*` 字段 |
 | CFG-02 | 配置原子写入 | 更新 retention、audit、summary、quota，再杀进程并重启 | 配置完整保留，不出现半文件；文件权限正确 |
 | CFG-03 | 记忆开关 | 更新 `memory_enabled=false` 后读写 | 返回 `MemoryDisabled`/fail-closed；重新启用后恢复 |
 | CFG-04 | 保留周期校验 | 设置 7/30/90/0 及非法值 | 合法值成功，非法值拒绝 |
-| CFG-05 | 存储配额 | 设置数据库、Capsule 和最低剩余空间阈值，制造超限条件 | 写入被拒绝并返回 `ResourceExhausted`；清理操作仍可执行 |
-| CFG-06 | 云备份门控 | default/local 账号、无授权、无 key、无 Adapter 分别调用备份 | `account_not_authenticated`/`BackupUnavailable`，不得上传 |
+| CFG-05 | 存储配额 | 设置数据库和最低剩余空间阈值，制造超限条件 | 写入被拒绝并返回 `ResourceExhausted`；清理操作仍可执行 |
+| CFG-06 | 退役方法 | 调用 `backup.create/list/restore` | 统一返回 `NotFound: unknown protocol method` |
 
-### 4.3 记忆空间残留与明文副本现场收口（MEM-L3-02 / SEC-05）
+### 4.3 本地导出 / 导入（MEM-CTL-01 / MEM-NFR-03）
+
+设置页的「数据导出」「数据导入」走同一条 Adapter → memoryd 路径；下表的命令都在
+隔离 `--development-identity` daemon 上执行，不触碰生产库。
+
+| 编号 | 用例 | 步骤 | 预期结果 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| EXP-01 | 导出格式与完整性 | 写入 L3、会话事件和摘要后调用 `privacy.export_data(limit_per_collection=500, include_audit=false)` | `format=bianbu-agent-memory.export.v1`；`scope` 与调用者命名空间一致；三类集合计数与实际写入一致，不含聊天原文和审计详情 | 已验证（K3 规格验收断言 `format` 与集合计数，2026-10-19） |
+| EXP-02 | 超过单页仍全量导出 | 写入 501 条以上事件（及超过 500 条的 L3）后从设置页导出 | 自动翻页并合并；导出条数等于保留期内总数，无重复、无截断；文件仍为 `export.v1` | 已验证（K3，2026-10-20：600 条事件 2 页导出，清空后完整恢复） |
+| EXP-03 | 导出快照一致性 | 第一页返回后并发写入新事件，再继续翻页 | 新事件不进入本次导出；`snapshot_at` 各页一致 | 已验证（Rust 用例 4 项通过，含并发写入隔离与分集合 rowid 快照） |
+| IMP-01 | 清空后完整恢复 | 导出 → `privacy.clear_all` → `privacy.import_data` → `long_term.get_many` + `sessions.get_history` + `long_term.search_headers` | 计数与导出前一致；原文、`tags` 和事件顺序可读回；导入记录 `sync_policy=local_only` | 已验证（K3，2026-10-19：`1/1/0` 导入，召回成功） |
+| IMP-02 | 重复导入幂等 | 对同一文件再次 `privacy.import_data` | `imported` 全为 0，`skipped` 等于上次导入条数，不产生副本 | 已验证（K3，2026-10-19：`skipped 1/1/0`） |
+| IMP-03 | 命名空间不符 | 导入 `scope` 属于其他账号/空间的导出文档 | 整体拒绝 `InvalidArgument`，不写入任何记录 | 已验证（K3 规格验收断言 `format` 与集合计数，2026-10-19） |
+| IMP-04 | 缺少或错误确认令牌 | 不带 `confirm_token` 或使用错误令牌调用导入 | 返回 `PermissionDenied`，数据不变；Adapter 不代签 | 已验证（K3 缺令牌与 Rust 单测覆盖；Adapter 不代签需现场复核） |
+| IMP-05 | 非法格式与超大文件 | 导入非 JSON、非 `export.v1` 或超过 4 MiB 的文件 | 页面本地拒绝或服务返回参数错误；不产生半写状态 | 已验证（插件单测覆盖格式/取消；4 MiB 上限需现场复核） |
+| IMP-06 | 导入中途失败 | 在写入过程中注入失败（如超配额） | 事务回滚，不留下半写记录；错误可重试 | 需执行 |
+| IMP-07 | 导入不触发上传 | 在有 outbox 表的环境导入后检查 `sync.status` | 不新增待上传 outbox 记录；`local_only` 记录不上云 | 已验证（导入记录为 `local_only`；main 无云备份路径，outbox 计数需现场复核） |
+
+### 4.4 记忆空间残留与明文副本现场收口（MEM-L3-02 / SEC-05）
 
 四个现场脚本都直连设备（现网守护进程 + 只读全库清册），都不启动测试实例，判定全部来自词典或
 规格、不做主观判断。以下命令在 K3（`192.0.2.10`）执行并留下 JSON 证据。
@@ -244,12 +262,12 @@ echo bianbu | sudo -S python3 scripts/k3_plaintext_replica_sweep.py [--apply]
   memory namespace 的口子（协议里每个方法只作用于调用者自己的 space，退役测试空间、
   探针空间、`runtime-context.*` 对任何身份都不可见）。该子命令以只读方式打开库，
   不迁移、不改写，可在服务运行期间执行。
-- 第 2 步走 `long_term.forget`（Tombstone + outbox 同步语义），不直接改 SQL —— 否则云端旧
-  备份会把删掉的行“复活”；`reason_code=l3_slot_gate_cleanup`。同一个脚本还会列出
+- 第 2 步走 `long_term.forget`（Tombstone + outbox 同步语义），不直接改 SQL —— 否则旧导出文件
+  被重新导入时会把删掉的行带回来；`reason_code=l3_slot_gate_cleanup`。同一个脚本还会列出
   `memory-registry` 里已死进程留下的注册文件（`--prune-registrations` 时一并删除），
   它们既不参与判定也不影响 MEM-L3-02 的结论。
 - 第 4 步的明文判定：文件名属于 `memory.db` 家族且头 16 字节是 `SQLite format 3`
-  （SQLCipher 库没有这个头），或 JSON 导出里真的含有记忆集合。现网库、`capsules/`、
+  （SQLCipher 库没有这个头），或 JSON 导出里真的含有记忆集合。现网库、`memory.keypkg`、
   key/secret 与任何**正被进程打开**的文件一律跳过；`--apply` 后脚本重新扫描复核。
 
 **K3 现场结果（2026-09-23，本地开发包 —— 开发期编号 0.1.20，非发布版本）**
@@ -280,7 +298,7 @@ sudo systemctl enable --now bianbu-agent-memoryd.service
 | --- | --- | --- | --- |
 | K3-PKG-01 | 包名和版本 | `dpkg-query -W -f='${Package} ${Version} ${Status} ${Architecture}\n' bianbu-agent-memory bianbu-agent-memoryd` | SDK 包为 `bianbu-agent-memory`，daemon 包为 `bianbu-agent-memoryd`，版本一致 |
 | K3-PKG-02 | SDK 导入 | `python3 -c 'import bianbu_agent_sdk.memory'` | 导入成功 |
-| K3-PKG-03 | postinst 初始化 | 查看 `/etc/bianbu-agent-memory`、`/var/lib/bianbu-agent-memory` | key、secret、database/capsule 目录已创建，权限符合要求 |
+| K3-PKG-03 | postinst 初始化 | 查看 `/etc/bianbu-agent-memory`、`/var/lib/bianbu-agent-memory` | key、secret、database 目录已创建，权限符合要求（不再创建 `capsules/`/`capsule-key`） |
 | K3-PKG-04 | 服务启停 | `systemctl is-enabled/is-active bianbu-agent-memoryd.service` | 安装后 enabled/active；停止和启动可重复 |
 | K3-PKG-05 | UDS | `test -S /run/bianbu/agent-memoryd.sock`、`ss -lxnp` | socket 存在且由 memoryd 监听 |
 | K3-PKG-06 | 服务重启 | `sudo systemctl restart bianbu-agent-memoryd.service` | 服务恢复，数据库和记忆不丢失 |
@@ -334,17 +352,15 @@ python3.13 scripts/k3_dplus_runtime_regression.py \
 
 预期 `K3_DPLUS_RUNTIME_REGRESSION_OK`：新值覆盖旧 slot、同义问题召回新值、active mapping 为 1、dead/retry 为 0。Provider 不可用时另执行 `Embedding` 降级用例，确认 FTS 仍可用。
 
-## 6. Capsule、同步和 DBus
+## 6. 同步、DBus 与已退役的 Capsule
+
+Capsule/云备份用例（原 BK-01..BK-07）随 2026-10-16 产品变更移出本分支，完整用例见
+`feature/mem-l4-cloud-backup` 上的文档。本分支只保留回归守卫：调用任何 `backup.*`
+方法必须返回 `NotFound`，`privacy.settings.get` 不得返回 `backup_enabled`/`backup_supported`。
 
 | 编号 | 用例 | 步骤 | 预期结果 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| BK-01 | 本地 Capsule 创建 | 配置 capsule key 和 local adapter，调用 `backup.create` | 仅包含授权范围内 L2/L3，gzip + AES-GCM，manifest/hash 完整 |
-| BK-02 | Capsule 预览 | `backup.preview_restore` | 只读展示 revision/HLC/Tombstone 冲突，不修改数据 |
-| BK-03 | Capsule 恢复 | 通过确认令牌调用 `backup.restore` | 幂等合并、Tombstone 优先、重建索引、写审计 |
-| BK-04 | 重复恢复 | 重复相同 restore 请求 | 不产生重复记录或 revision 漂移 |
-| BK-05 | 篡改检测 | 修改 Capsule 内容或 manifest | 完整性校验失败，不导入 |
-| BK-06 | API-Key HTTP 适配器 | 使用本地 HTTPS/Mock 文件 API 配置 URL 和 key | 携带 `X-API-Key`，只上传密文，下载/删除同源对象通过 |
-| BK-07 | default 账号门控 | default 账号调用 `backup.run_scheduled` | 返回未认证/拒绝，不创建云端上传任务 |
+| BK-00 | 云备份已下线 | 调用 `backup.create`、`backup.list`、`backup.restore` | 均为 `NotFound: unknown protocol method`；配置文件中旧的 `backup_*` 键仍可解析 | 已验证 |
 | BK-08 | Outbox | authenticated account 写入 account-agent scope 记录后查询 `sync.status` | 生成 metadata-only outbox；无真实 key 时 payload 为空，不伪造密文 |
 | BK-09 | DBus Call | 启动 `--dbus`，调用 `com.bianbu.AgentMemory1` | 返回与 UDS 等价的协议响应；普通 Agent 仍优先使用 SDK/UDS | 已验证（2026-09-23 K3 现网 11/11 门禁：发现接口 / 未注册调用者被拒 / 注册后 `system.health`+`system.stats` 成功 / 协议版本不符 / `system.hello` / 超 4 MiB 帧 / 非 JSON / 注销后重新被拒；脚本 `scripts/k3_dbus_acceptance.py`，证据 `artifacts/k3-dbus-acceptance.json`，契约见 `docs/DBUS_CONTROL_PLANE.md`。未注册的 `busctl`/`bianbu-agent-memory` CLI 仍被拒，D-Bus 不构成运维入口） |
 

@@ -10,7 +10,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, Sequence
 
-from .ontology import is_question_like, memory_slot, preference_slot, slot_residual
+from .ontology import (
+    declaration_remainder,
+    is_question_like,
+    memory_slot,
+    preference_slot,
+    profile_address_clause,
+    profile_name_clause,
+    slot_residual,
+)
 from .temporal import extract_reminder
 from .types import EvidenceRef, LongTermMemory, MemoryKind, SyncPolicy
 
@@ -364,6 +372,24 @@ def _profile_residual(text: str) -> str | None:
     return residual
 
 
+def _declaration_residual(text: str, clauses: tuple[str, ...]) -> str | None:
+    """Return the durable text a declaration leaves behind, or None when there is none.
+
+    Companion to :func:`_profile_residual` for the address field and for a
+    sentence that declares a name and an address at once: what neither slot can
+    hold is kept as its own memory instead of going down with the clause.
+    """
+
+    remainder = declaration_remainder(text, clauses)
+    if not remainder:
+        return None
+    if is_question_like(remainder) or extract_reminder(remainder) is not None:
+        return None
+    if _is_task_request(remainder):
+        return None
+    return remainder
+
+
 class RuleBasedMem0Planner:
     """Offline fallback that preserves Mem0's extract/merge action contract.
 
@@ -385,34 +411,72 @@ class RuleBasedMem0Planner:
                 not text
                 or lowered.startswith(_INTERNAL_PROMPT_PREFIXES)
                 or is_question_like(text)
-                or not any(hint in lowered for hint in _EXPLICIT_MEMORY_HINTS)
             ):
                 continue
             durable_text = _durable_text(text)
             if not durable_text:
                 continue
-            profile = _profile_fact(durable_text)
-            facts.append(
-                {
-                    "text": profile or durable_text,
-                    "kind": (
-                        MemoryKind.PROFILE.value
-                        if profile
-                        else _durable_kind(durable_text).value
-                    ),
-                    "confidence": 0.65,
-                }
-            )
-            if profile:
-                residual = _profile_residual(durable_text)
-                if residual is not None:
+            name_clause = profile_name_clause(durable_text)
+            address_clause = profile_address_clause(durable_text)
+            if not (
+                name_clause
+                or address_clause
+                or any(hint in lowered for hint in _EXPLICIT_MEMORY_HINTS)
+            ):
+                continue
+            name_text = name_clause or _profile_fact(durable_text)
+            if name_text and address_clause:
+                # A name and an address are two single-valued fields; keeping the
+                # sentence whole would bury the address inside the name record,
+                # where no later rename reaches it (K3 2026-10-15, defect
+                # 7136281755: "我的名字叫王源，以后叫我小元" left the fused record
+                # "用户名字是 Dong，希望被称呼为「太奶」" untouched, and the model kept
+                # answering the stale address from it).
+                clauses = (name_text, address_clause)
+                for clause in clauses:
                     facts.append(
                         {
-                            "text": residual,
-                            "kind": _durable_kind(residual).value,
+                            "text": clause,
+                            "kind": MemoryKind.PROFILE.value,
                             "confidence": 0.65,
                         }
                     )
+                residual = _declaration_residual(durable_text, clauses)
+            elif name_text:
+                facts.append(
+                    {
+                        "text": name_text,
+                        "kind": MemoryKind.PROFILE.value,
+                        "confidence": 0.65,
+                    }
+                )
+                residual = _profile_residual(durable_text)
+            elif address_clause:
+                facts.append(
+                    {
+                        "text": address_clause,
+                        "kind": MemoryKind.PROFILE.value,
+                        "confidence": 0.65,
+                    }
+                )
+                residual = _declaration_residual(durable_text, (address_clause,))
+            else:
+                facts.append(
+                    {
+                        "text": durable_text,
+                        "kind": _durable_kind(durable_text).value,
+                        "confidence": 0.65,
+                    }
+                )
+                residual = None
+            if residual is not None:
+                facts.append(
+                    {
+                        "text": residual,
+                        "kind": _durable_kind(residual).value,
+                        "confidence": 0.65,
+                    }
+                )
         return parse_candidates({"facts": facts})
 
     async def merge(

@@ -64,10 +64,6 @@ class SyncPending(MemoryError):
     code = "SyncPending"
 
 
-class BackupUnavailable(MemoryError):
-    code = "BackupUnavailable"
-
-
 class ModelUnavailable(MemoryError):
     code = "ModelUnavailable"
 
@@ -93,7 +89,6 @@ _ERROR_TYPES: dict[str, type[MemoryError]] = {
         ServerUnavailable,
         AccountOffline,
         SyncPending,
-        BackupUnavailable,
         ModelUnavailable,
         ProtocolMismatch,
         MemoryDisabled,
@@ -137,7 +132,6 @@ __all__ = [
     "ServerUnavailable",
     "AccountOffline",
     "SyncPending",
-    "BackupUnavailable",
     "ModelUnavailable",
     "ProtocolMismatch",
     "MemoryDisabled",

@@ -141,6 +141,7 @@ class SessionAPI:
         *,
         interval_turns: int = 5,
         keep_raw_turns: int = 5,
+        force: bool = False,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return self._client._call(
@@ -149,6 +150,7 @@ class SessionAPI:
                 "session_id": session_id,
                 "interval_turns": interval_turns,
                 "keep_raw_turns": keep_raw_turns,
+                "force": force,
             },
             idempotency_key=idempotency_key,
         )
@@ -287,6 +289,7 @@ class AsyncSessionAPI:
         *,
         interval_turns: int = 5,
         keep_raw_turns: int = 5,
+        force: bool = False,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return await self._client._call(
@@ -295,6 +298,7 @@ class AsyncSessionAPI:
                 "session_id": session_id,
                 "interval_turns": interval_turns,
                 "keep_raw_turns": keep_raw_turns,
+                "force": force,
             },
             idempotency_key=idempotency_key,
         )

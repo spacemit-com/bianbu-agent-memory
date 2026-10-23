@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -13,6 +14,12 @@ const ctx = { on: (name, fn) => handlers.set(name, fn),
 apply(ctx, { python: '/usr/bin/python3', bridge: join(dirname(fileURLToPath(import.meta.url)), 'bridge.py'), state,
   sdk: process.env.BIANBU_MEMORY_SDK_PATH });
 const signal = new AbortController().signal;
+// Read the same isolated daemon independently: handler completion alone cannot
+// prove that cancellation or compaction was durably recorded.
+const inspect = code => JSON.parse(execFileSync('/usr/bin/python3', ['-c',
+  `import sys,json\nsys.path.insert(0,sys.argv[2])\nfrom bianbu_agent_sdk.memory import MemoryClient,InstructionScope\nwith MemoryClient.connect(sys.argv[1]) as c:\n` + code,
+  join(state, 'memory.sock'), process.env.BIANBU_MEMORY_SDK_PATH || '/usr/lib/python3/dist-packages'],
+  { encoding: 'utf8' }));
 const message = content => ({ content: [{ type: 'text', text: content }], source: { kind: 'user' } });
 const user = '请记住我的名字是青禾839，是C++程序员，以后说话要通俗易懂。';
 const agent = { id: 'gate-a', session: { header: {}, events: [
@@ -76,11 +83,23 @@ try {
     {type:'turn/start',data:{turn:2}}, {type:'user/message',data:message('取消测试')} ]},
     {type:'turn/end', data:{turn:2, reason:{kind:'aborted'}}});
   await handlers.get('session/flush')();
+  const cancelled = inspect(" print(json.dumps(c.sessions.get_context('dsh:gate-a',include_events=True)))");
+  assert.ok(cancelled.events.some(e => e.event_type === 'task_started'));
+  assert.ok(cancelled.events.some(e => e.event_type === 'task_failed' && e.payload.status === 'cancelled'));
+  assert.ok(cancelled.events.some(e => e.event_type === 'checkpoint_marker'));
   const compactState = {id:'gate-compact',header:{},events:[
     {type:'compaction/summary',data:{compactionId:'compact-1',summary:[{type:'text',text:'保留压缩摘要'}],shadowedSeqs:[1,2]}},
   ]};
   handlers.get('session/event')(compactState,{type:'compaction/end',data:{compactionId:'compact-1',error:null}});
   await handlers.get('session/flush')();
+  const compacted = inspect(" print(json.dumps(c.sessions.get_context('dsh:gate-compact',include_events=True)))");
+  assert.equal(compacted.summary.summary.current_status, '保留压缩摘要');
+  assert.ok(compacted.summary.summary.context_pointers.includes('dsh:gate-compact:event:1'));
+  assert.ok(compacted.events.some(e => e.event_type === 'checkpoint_marker'));
+  inspect(" c.instructions.put(text='IsolatedInstructionGate739',scope=InstructionScope.AGENT)\n print(json.dumps(True))");
+  const instructionRecall = await handlers.get('agent/pre-step')({agent:{id:'gate-instruction'},signal},
+    async()=>({kind:'enter',messages:[message('instruction injection gate')]}));
+  assert.match(JSON.stringify(instructionRecall), /IsolatedInstructionGate739/);
   const automatic = { id:'gate-date-auto', session:{header:{},events:[
     {type:'turn/start',data:{turn:1}},
     {type:'user/message',data:message('请记住明天早上9点自动日期验收926会议，晚上7点瑜伽')},
@@ -111,7 +130,8 @@ try {
       'untrusted_context','duplicate_turn','subagent_write_suppressed','explicit_save_tool','search_tool',
       'relative_date_saved_absolute','two_activity_clocks_preserved','automatic_relative_date',
       'structured_recall','update_revision_conflict','deletion_confirmation_required',
-      'session_start','compact_boundary','run_started','interrupted_turn','compaction_summary_checkpoint'] },null,2));
+      'session_start','compact_boundary','run_started','interrupted_turn','compaction_summary_checkpoint',
+      'persisted_cancel_checkpoint','persisted_compaction_summary','instruction_memory_injection'] },null,2));
 } finally {
   handlers.get('dispose')();
   // Temporary files are left to the OS until the child finishes draining.

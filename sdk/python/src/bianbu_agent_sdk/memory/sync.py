@@ -36,3 +36,4 @@ class AsyncSyncAPI:
         return await self._client._call(
             "sync.request", {"scopes": list(scopes)}, idempotency_key=idempotency_key
         )
+

@@ -29,6 +29,7 @@ from ..ontology import (
 )
 from ..runtime import get_memory_bridge
 from ..types import MemoryKind
+from ..temporal import normalize_relative_dates
 from .context import HostContext, memory_socket_path, memory_timeout
 
 LOGGER = logging.getLogger("bianbu_agent_sdk.memory.mcp_server")
@@ -251,6 +252,7 @@ async def _manage(host: HostContext, target: str, arguments: dict) -> dict:
             }
         slot = resolved
     if action in {"add", "replace"} and isinstance(content, str):
+        content = normalize_relative_dates(content.strip())
         failure = validate_memory_text(target, content.strip())
         if failure is not None:
             return {
@@ -593,6 +595,10 @@ async def memory_record(host: HostContext, *, content: str) -> str:
             outcome = {"success": bool(recorded)}
     except asyncio.CancelledError:
         raise
+    except asyncio.TimeoutError:
+        return "AgentMemory record timed out; memory was not confirmed recorded"
+    except MemoryError as exc:
+        return f"AgentMemory could not record the memory ({failure_code(exc)}: {exc})"
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("AgentMemory explicit record unavailable: %s", exc)
         return "AgentMemory unavailable; memory was not recorded"

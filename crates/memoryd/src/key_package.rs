@@ -50,44 +50,6 @@ pub fn read_secret_file(path: &Path) -> Result<Zeroizing<Vec<u8>>, Box<dyn std::
     Ok(secret)
 }
 
-pub fn read_capsule_key_file(
-    path: &Path,
-) -> Result<Zeroizing<Vec<u8>>, Box<dyn std::error::Error>> {
-    let metadata = fs::metadata(path)?;
-    if metadata.permissions().mode() & 0o007 != 0 {
-        return Err(format!(
-            "capsule key file {} must not be accessible by group or others",
-            path.display()
-        )
-        .into());
-    }
-    let encoded = fs::read(path)?;
-    let mut trimmed = encoded.as_slice();
-    // postinst 用 dd/openssl rand 生成的密钥是 32 字节原始二进制，不带换行符：
-    // 这种情况下任何一个字节（包括末尾的 0x0a/0x0d）都是密钥内容，不能当换行剥掉。
-    // 只有长度不是 32 字节时才剥离尾部换行，保留旧版对「32 字节密钥 + 换行」这类
-    // 文本写法的兼容，同时避免把合法二进制密钥截成 31 字节误入 base64 分支。
-    if trimmed.len() != 32 {
-        while trimmed
-            .last()
-            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-        {
-            trimmed = &trimmed[..trimmed.len() - 1];
-        }
-    }
-    let key = if trimmed.len() == 32 {
-        trimmed.to_vec()
-    } else if trimmed.len() == 64 && trimmed.iter().all(|byte| byte.is_ascii_hexdigit()) {
-        hex::decode(trimmed)?
-    } else {
-        BASE64.decode(trimmed)?
-    };
-    if key.len() != 32 {
-        return Err("capsule key must contain exactly 32 bytes".into());
-    }
-    Ok(Zeroizing::new(key))
-}
-
 pub fn initialize(
     package_path: &Path,
     account_secret: &[u8],
@@ -250,57 +212,5 @@ mod tests {
         use std::io::Write;
         file.write_all(bytes).unwrap();
         path
-    }
-
-    #[test]
-    fn capsule_key_binary_ending_in_newline_byte_is_kept_whole() {
-        // `dd if=/dev/urandom bs=32 count=1` produces a raw 32-byte key with no
-        // trailing newline. A key whose last byte happens to be 0x0a (or 0x0d)
-        // must still be read as-is, not truncated to 31 bytes and misrouted into
-        // the base64 branch (which fails with "Invalid symbol ...").
-        let directory = TempDir::new().unwrap();
-        for trailing in [0x0a_u8, 0x0d_u8] {
-            let mut key = vec![0x42_u8; 31];
-            key.push(trailing);
-            assert_eq!(key.len(), 32);
-            let path = write_key_file(&directory, "capsule.key", &key);
-            let read = read_capsule_key_file(&path).unwrap();
-            assert_eq!(&*read, &key);
-        }
-    }
-
-    #[test]
-    fn capsule_key_with_trailing_newline_still_reads_32_byte_key() {
-        // Older behavior accepted a text file of exactly 32 key bytes plus a
-        // trailing newline when the key's last byte is not itself 0x0a/0x0d.
-        // That stays supported: only the newline is stripped and the 32 key
-        // bytes are preserved.
-        let directory = TempDir::new().unwrap();
-        let key = [0x42_u8; 32];
-        let mut content = key.to_vec();
-        content.push(b'\n');
-        let path = write_key_file(&directory, "capsule.key", &content);
-        let read = read_capsule_key_file(&path).unwrap();
-        assert_eq!(&*read, &key);
-    }
-
-    #[test]
-    fn capsule_key_text_formats_still_decode() {
-        let directory = TempDir::new().unwrap();
-        let expected = [0x24_u8; 32];
-
-        let hex = hex::encode(expected);
-        let hex_path = write_key_file(&directory, "capsule.hex", hex.as_bytes());
-        assert_eq!(
-            &*read_capsule_key_file(&hex_path).unwrap(),
-            &expected
-        );
-
-        let base64 = BASE64.encode(expected);
-        let base64_path = write_key_file(&directory, "capsule.b64", base64.as_bytes());
-        assert_eq!(
-            &*read_capsule_key_file(&base64_path).unwrap(),
-            &expected
-        );
     }
 }

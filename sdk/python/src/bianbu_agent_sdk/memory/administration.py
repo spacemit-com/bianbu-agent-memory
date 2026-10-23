@@ -31,6 +31,49 @@ def _projection_action(action: str) -> dict[str, Any]:
         return {"state": "cleanup_pending", "error": str(exc)[:500]}
 
 
+def _merge_export_pages_pages(pages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge a paginated export into one standard ``export.v1`` document.
+
+    Collections are keyed by their original identity, so a cursor that overlaps
+    by one millisecond can never produce a duplicate.  Transport-only fields
+    (`has_more`, `next_cursor`) are dropped from the file; the snapshot and
+    per-collection counts stay so an operator can prove the export is complete.
+    """
+    if not pages:
+        raise ValueError("export returned no pages")
+    keys = {
+        "session_events": "event_id",
+        "session_summaries": lambda row: (
+            str(row.get("session_id")),
+            row.get("revision", 1),
+        ),
+        "long_term_memories": "memory_id",
+    }
+    merged: dict[str, Any] = dict(pages[0])
+    for collection, key in keys.items():
+        seen: set[Any] = set()
+        values: list[Any] = []
+        for page in pages:
+            for row in page.get(collection) or []:
+                if not isinstance(row, dict):
+                    continue
+                identity = key(row) if callable(key) else row.get(key)
+                if identity is None or identity in seen:
+                    continue
+                seen.add(identity)
+                values.append(row)
+        merged[collection] = values
+    merged.pop("next_cursor", None)
+    merged.pop("has_more_any", None)
+    # A single-page export from an older daemon has no paging metadata at all;
+    # it is complete by definition and should keep the legacy document shape.
+    if any(page.get("has_more_any") is not None or page.get("page_count") for page in pages):
+        merged["complete"] = True
+    if merged.get("complete") is True:
+        merged["page_count"] = len(pages)
+    return merged
+
+
 class AuditAPI:
     def __init__(self, client: "MemoryClient") -> None:
         self._client = client
@@ -96,9 +139,6 @@ class PrivacyAPI:
         memory_enabled: bool | None = None,
         retention_days: int | None = None,
         audit_enabled: bool | None = None,
-        backup_enabled: bool | None = None,
-        backup_frequency: str | None = None,
-        backup_scopes: list[str] | tuple[str, ...] | None = None,
         local_device_id: str | None = None,
         timezone: str | None = None,
         sensitive_action_confirmation: str | None = None,
@@ -118,9 +158,6 @@ class PrivacyAPI:
                 "memory_enabled": memory_enabled,
                 "retention_days": retention_days,
                 "audit_enabled": audit_enabled,
-                "backup_enabled": backup_enabled,
-                "backup_frequency": backup_frequency,
-                "backup_scopes": list(backup_scopes) if backup_scopes is not None else None,
                 "local_device_id": local_device_id,
                 "timezone": timezone,
                 "sensitive_action_confirmation": sensitive_action_confirmation,
@@ -145,6 +182,42 @@ class PrivacyAPI:
         limit_per_collection: int = 200,
         include_audit: bool = True,
         confirm_token: str | None = None,
+        all_pages: bool = True,
+    ) -> dict[str, Any]:
+        first = self._export_page(
+            limit_per_collection=limit_per_collection,
+            include_audit=include_audit,
+            confirm_token=confirm_token,
+        )
+        if not all_pages:
+            return first
+        pages = [first]
+        seen_cursors: set[str] = set()
+        while pages[-1].get("has_more_any"):
+            cursor = pages[-1].get("next_cursor") or {}
+            marker = json.dumps(cursor, sort_keys=True)
+            if marker in seen_cursors:
+                raise ValueError("export paging cursor did not advance")
+            seen_cursors.add(marker)
+            pages.append(self._export_page(
+                limit_per_collection=limit_per_collection,
+                include_audit=include_audit,
+                confirm_token=confirm_token,
+                snapshot_at=pages[-1].get("snapshot_at"),
+                snapshot=pages[-1].get("snapshot"),
+                cursor=cursor,
+            ))
+        return _merge_export_pages_pages(pages)
+
+    def _export_page(
+        self,
+        *,
+        limit_per_collection: int,
+        include_audit: bool,
+        confirm_token: str | None,
+        snapshot_at: int | None = None,
+        snapshot: dict[str, Any] | None = None,
+        cursor: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "limit_per_collection": limit_per_collection,
@@ -152,9 +225,31 @@ class PrivacyAPI:
         }
         if confirm_token is not None:
             params["confirm_token"] = confirm_token
+        if snapshot_at is not None:
+            params["snapshot_at"] = snapshot_at
+        if snapshot:
+            params["snapshot"] = snapshot
+        if cursor:
+            params["cursor"] = cursor
+        return self._client._call("privacy.export_data", params)
+
+    def import_data(
+        self,
+        payload: dict[str, Any],
+        *,
+        confirm_token: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Restore a ``privacy.export_data`` document into this namespace.
+
+        The import merges: records whose original id is already present are
+        skipped, so re-importing the same file is safe. ``confirm_token`` is
+        mandatory because restoring memory is a data-boundary write.
+        """
         return self._client._call(
-            "privacy.export_data",
-            params,
+            "privacy.import_data",
+            {"payload": payload, "confirm_token": confirm_token},
+            idempotency_key=idempotency_key,
         )
 
     def clear_history(
@@ -213,6 +308,42 @@ class AsyncPrivacyAPI:
         limit_per_collection: int = 200,
         include_audit: bool = True,
         confirm_token: str | None = None,
+        all_pages: bool = True,
+    ) -> dict[str, Any]:
+        first = await self._export_page(
+            limit_per_collection=limit_per_collection,
+            include_audit=include_audit,
+            confirm_token=confirm_token,
+        )
+        if not all_pages:
+            return first
+        pages = [first]
+        seen_cursors: set[str] = set()
+        while pages[-1].get("has_more_any"):
+            cursor = pages[-1].get("next_cursor") or {}
+            marker = json.dumps(cursor, sort_keys=True)
+            if marker in seen_cursors:
+                raise ValueError("export paging cursor did not advance")
+            seen_cursors.add(marker)
+            pages.append(await self._export_page(
+                limit_per_collection=limit_per_collection,
+                include_audit=include_audit,
+                confirm_token=confirm_token,
+                snapshot_at=pages[-1].get("snapshot_at"),
+                snapshot=pages[-1].get("snapshot"),
+                cursor=cursor,
+            ))
+        return _merge_export_pages_pages(pages)
+
+    async def _export_page(
+        self,
+        *,
+        limit_per_collection: int,
+        include_audit: bool,
+        confirm_token: str | None,
+        snapshot_at: int | None = None,
+        snapshot: dict[str, Any] | None = None,
+        cursor: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "limit_per_collection": limit_per_collection,
@@ -220,9 +351,26 @@ class AsyncPrivacyAPI:
         }
         if confirm_token is not None:
             params["confirm_token"] = confirm_token
+        if snapshot_at is not None:
+            params["snapshot_at"] = snapshot_at
+        if snapshot:
+            params["snapshot"] = snapshot
+        if cursor:
+            params["cursor"] = cursor
+        return await self._client._call("privacy.export_data", params)
+
+    async def import_data(
+        self,
+        payload: dict[str, Any],
+        *,
+        confirm_token: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """See :meth:`PrivacyAPI.import_data`."""
         return await self._client._call(
-            "privacy.export_data",
-            params,
+            "privacy.import_data",
+            {"payload": payload, "confirm_token": confirm_token},
+            idempotency_key=idempotency_key,
         )
 
     async def clear_history(

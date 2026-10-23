@@ -139,7 +139,7 @@ THREE CALLING SHAPES
      activity time; sessions are visited newest first (pass sort="oldest" to visit
      oldest first). When the query asks for the beginning of history (第一个会话 /
      first session / earliest session), the oldest sessions that have readable
-     transcripts are returned whole, with their full messages. Search covers the 20
+     transcripts are returned with at most 5000 events each. Search covers the 20
    most recently active other sessions. Entries that carry `last_active_at` (bare
    epoch milliseconds, for machine use only) also carry `last_active_at_display` (the
    same instant written as "2026-09-24 11:31"). Show times by copying the display
@@ -147,7 +147,7 @@ THREE CALLING SHAPES
 
   2) READ - pass session_id:
      session_search(session_id="...")
-     Returns the full recorded transcript of one session (user requests and assistant
+     Returns a bounded recorded transcript of one session (user requests and assistant
      replies, oldest first). Use a session_id from a discovery result or a browse
      call. Takes precedence over query when both are given.
 
@@ -310,7 +310,10 @@ def create_server() -> FastMCP:
     @server.tool(
         name="memory_retrieve",
         title="Retrieve Memory",
-        description=MEMORY_RETRIEVE_DESCRIPTION,
+        description=MEMORY_RETRIEVE_DESCRIPTION + (
+            " Each memory's text_truncated indicates clipped text. Treat it as "
+            "a fragment, not the full record. has_more indicates additional records."
+        ),
         annotations=ToolAnnotations(
             title="Retrieve Memory",
             readOnlyHint=True,
@@ -339,7 +342,13 @@ def create_server() -> FastMCP:
     @server.tool(
         name="session_search",
         title="Session Search",
-        description=SESSION_SEARCH_DESCRIPTION,
+        description=SESSION_SEARCH_DESCRIPTION + (
+            " Searches/browses only the latest 20 sessions excluding the current "
+            "session. Oldest means oldest in that window, never the first ever. "
+            "Discovery uses substring matching and at most 200 events per session; "
+            "reads use at most 5000 events. Respect returned scope/completeness: "
+            "no matches is not proof the topic was never discussed."
+        ),
         annotations=ToolAnnotations(
             title="Session Search",
             readOnlyHint=True,

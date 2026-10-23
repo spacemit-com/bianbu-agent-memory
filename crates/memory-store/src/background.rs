@@ -7,9 +7,14 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 const MAINTENANCE_INTERVAL_MS: i64 = 60 * 60 * 1000;
-const BACKUP_SCAN_INTERVAL_MS: i64 = 15 * 60 * 1000;
 const EMBEDDING_BACKFILL_INTERVAL_MS: i64 = 60 * 1000;
 const LEXICAL_BACKFILL_INTERVAL_MS: i64 = 60 * 1000;
+const SUMMARY_COMPENSATION_INTERVAL_MS: i64 = 60 * 1000;
+const SUMMARY_IDLE_MS: i64 = 60 * 1000;
+// A crashed host may leave task_started forever. After a longer quiet window,
+// summarize completed pairs only, without closing the unfinished task.
+const SUMMARY_ABANDONED_MS: i64 = 10 * 60 * 1000;
+const SUMMARY_COMPENSATION_BATCH: i64 = 8;
 /// Rows per fts2 backfill batch (MEM-NFR-01-01). Bounded so the Immediate
 /// write transaction stays short — a 100k-row namespace drains in ~100
 /// one-second-spaced batches instead of one long write lock.
@@ -68,7 +73,8 @@ impl Store {
 
         for namespace in namespaces {
             let identity = background_identity(&namespace, device_id);
-            for job_kind in ["maintenance", "backup", "embedding", "lexical"] {
+            // Preserve uncovered completed turns before retention maintenance.
+            for job_kind in ["summary", "maintenance", "embedding", "lexical"] {
                 if !self.background_job_due(&namespace, job_kind, now)? {
                     deferred += 1;
                     continue;
@@ -85,8 +91,8 @@ impl Store {
                     Ok(json!({"state":"skipped","reason":"memory_disabled"}))
                 } else {
                     match job_kind {
+                        "summary" => self.run_summary_compensation(&identity, &request, now),
                         "maintenance" => self.run_maintenance(&identity, &request),
-                        "backup" => self.run_scheduled_backup(&identity, &request),
                         "embedding" => self.run_embedding_backfill(&identity),
                         "lexical" => self.run_lexical_backfill(&identity),
                         _ => unreachable!(),
@@ -95,8 +101,8 @@ impl Store {
                 match result {
                     Ok(value) => {
                         let interval = match job_kind {
+                            "summary" => SUMMARY_COMPENSATION_INTERVAL_MS,
                             "maintenance" => MAINTENANCE_INTERVAL_MS,
-                            "backup" => BACKUP_SCAN_INTERVAL_MS,
                             "lexical" => LEXICAL_BACKFILL_INTERVAL_MS,
                             _ => EMBEDDING_BACKFILL_INTERVAL_MS,
                         };
@@ -106,6 +112,14 @@ impl Store {
                             now,
                             now.saturating_add(interval),
                         )?;
+                        if job_kind == "summary" {
+                            self.connection()?.execute(
+                                "UPDATE background_worker_state SET scan_offset=?4
+                                 WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND job_kind='summary'",
+                                params![namespace.account_id, namespace.agent_id, namespace.memory_space_id,
+                                    value["scan_offset"].as_i64().unwrap_or(0)],
+                            ).map_err(db_error)?;
+                        }
                         succeeded += 1;
                         results.push(json!({
                             "account_id_hash":crate::hash_text(&namespace.account_id),
@@ -133,6 +147,60 @@ impl Store {
             "completed_at":now,"attempted":attempted,"succeeded":succeeded,
             "failed":failed,"deferred":deferred,"results":results
         }))
+    }
+
+    /// Repair short/tail summaries from persisted L1, including after restart.
+    /// An idle snapshot is not a session-close decision. Never delete raw events.
+    fn run_summary_compensation(
+        &self, identity: &MemoryIdentity, request: &RequestEnvelope, now: i64,
+    ) -> ServiceResult<Value> {
+        let scan_offset: i64 = self.connection()?.query_row(
+            "SELECT scan_offset FROM background_worker_state
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND job_kind='summary'",
+            params![identity.account_id, identity.agent_id, identity.memory_space_id], |row| row.get(0),
+        ).optional().map_err(db_error)?.unwrap_or(0);
+        let candidates = {
+            let connection = self.connection()?;
+            let mut statement = connection.prepare(
+                "SELECT e.session_id, MAX(e.event_sequence)
+                 FROM session_events e
+                 LEFT JOIN session_summaries s ON s.account_id=e.account_id
+                   AND s.agent_id=e.agent_id AND s.memory_space_id=e.memory_space_id
+                   AND s.session_id=e.session_id AND s.is_current=1
+                 WHERE e.account_id=?1 AND e.agent_id=?2 AND e.memory_space_id=?3
+                 GROUP BY e.session_id
+                 HAVING MAX(e.created_at)<=?4
+                   AND MAX(CASE WHEN e.event_type='assistant_message' THEN e.event_sequence ELSE 0 END)
+                       > COALESCE(MAX(s.source_event_sequence),0)
+                   AND (MAX(e.created_at)<=?7 OR MAX(CASE WHEN e.event_type='task_started' THEN e.event_sequence ELSE 0 END)
+                       <= MAX(CASE WHEN e.event_type IN ('assistant_message','task_completed','task_failed')
+                                   THEN e.event_sequence ELSE 0 END))
+                 ORDER BY MAX(e.created_at), e.session_id LIMIT ?5 OFFSET ?6"
+            ).map_err(db_error)?;
+            let rows = statement.query_map(params![identity.account_id, identity.agent_id,
+                identity.memory_space_id, now.saturating_sub(SUMMARY_IDLE_MS),
+                SUMMARY_COMPENSATION_BATCH, scan_offset, now.saturating_sub(SUMMARY_ABANDONED_MS)], |row| Ok((row.get::<_,String>(0)?, row.get::<_,i64>(1)?)))
+                .map_err(db_error)?;
+            rows.collect::<Result<Vec<_>,_>>().map_err(db_error)?
+        };
+        let config = self.product_config()?;
+        let mut summarized = 0;
+        for (session_id, sequence) in &candidates {
+            let mut summary_request = request.clone();
+            summary_request.method = "sessions.summarize".to_owned();
+            summary_request.request_id = Uuid::new_v4().to_string();
+            summary_request.idempotency_key = Some(format!("memoryd:idle-summary:{session_id}:{sequence}"));
+            summary_request.params = json!({"session_id":session_id, "force":true,
+                "interval_turns":config.summary_interval_turns, "keep_raw_turns":config.recent_turn_limit});
+            let result = self.summarize_session(identity, &summary_request)?;
+            if result["state"] == "summarized" { summarized += 1; }
+        }
+        // Malformed/unpaired legacy events must not monopolize the bounded
+        // batch. Persist scan progress; wrap after the scan or any repair.
+        let next_offset = if candidates.is_empty() || summarized > 0 { 0 }
+            else { scan_offset.saturating_add(candidates.len() as i64) };
+        Ok(json!({"candidates":candidates.len(), "summarized":summarized, "scan_offset":next_offset,
+                  "idle_ms":SUMMARY_IDLE_MS, "batch_limit":SUMMARY_COMPENSATION_BATCH}))
     }
 
     /// Re-embed one namespace batch: missing vectors, stale revisions, and
@@ -406,8 +474,6 @@ impl Store {
                  UNION SELECT account_id,agent_id,memory_space_id FROM session_summaries
                  UNION SELECT account_id,agent_id,memory_space_id FROM long_term_memories
                  UNION SELECT account_id,agent_id,memory_space_id FROM instructions
-                 UNION SELECT account_id,agent_id,memory_space_id FROM backup_catalog
-                    WHERE memory_space_id IS NOT NULL
                  ORDER BY account_id,agent_id,memory_space_id",
             )
             .map_err(db_error)?;
@@ -555,8 +621,8 @@ fn background_identity(namespace: &Namespace, device_id: &str) -> MemoryIdentity
 
 fn background_request(namespace: &Namespace, job_kind: &str, now: i64) -> RequestEnvelope {
     let interval = match job_kind {
+        "summary" => SUMMARY_COMPENSATION_INTERVAL_MS,
         "maintenance" => MAINTENANCE_INTERVAL_MS,
-        "backup" => BACKUP_SCAN_INTERVAL_MS,
         "lexical" => LEXICAL_BACKFILL_INTERVAL_MS,
         _ => EMBEDDING_BACKFILL_INTERVAL_MS,
     };
@@ -565,15 +631,13 @@ fn background_request(namespace: &Namespace, job_kind: &str, now: i64) -> Reques
         request_id: Uuid::new_v4().to_string(),
         trace_id: Uuid::new_v4().to_string(),
         method: match job_kind {
+            "summary" => "background.summary".to_owned(),
             "maintenance" => "maintenance.run".to_owned(),
-            "backup" => "backup.run_scheduled".to_owned(),
             "lexical" => "background.lexical".to_owned(),
             _ => "background.embedding".to_owned(),
         },
         params: if job_kind == "maintenance" {
             json!({"remove_expired":true})
-        } else if job_kind == "backup" {
-            json!({"force":false})
         } else {
             json!({"batch":true})
         },

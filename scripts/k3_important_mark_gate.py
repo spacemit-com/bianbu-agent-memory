@@ -131,8 +131,9 @@ async def main() -> int:
                      {"revision": same.revision, "unchanged": same.raw.get("unchanged")})
 
                 settings = await client.privacy.settings()
-                scopes = settings.get("backup_scopes", [])
-                step("5. 默认备份范围已含 important", MARK in scopes, {"backup_scopes": scopes})
+                step("5. 云备份退役后设置页不再暴露备份字段",
+                     "backup_enabled" not in settings and "backup_scopes" not in settings,
+                     {"keys": sorted(key for key in settings if key.startswith("backup"))})
             finally:
                 await client.close()
 

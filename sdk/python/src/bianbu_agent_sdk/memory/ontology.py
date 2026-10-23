@@ -14,7 +14,18 @@ class MemoryFieldSpec:
 
 
 L3_FIELD_DICTIONARY = (
-    MemoryFieldSpec("profile.user_name", ("姓名", "名字", "称呼", "user name"), max_length=64),
+    MemoryFieldSpec("profile.user_name", ("姓名", "名字", "user name"), max_length=64),
+    #: How the user wants to be addressed is its own single-valued field.  It used
+    #: to be an alias of ``profile.user_name``, which made "Dong" and the address
+    #: mutually exclusive in the dictionary; a sentence declaring both could then
+    #: only be kept as free text, where no later rename ever reached it (K3
+    #: 2026-10-15: the name slot moved to the new name while the address stayed on
+    #: the old value, and the model answered from the stale prose record).
+    MemoryFieldSpec(
+        "profile.preferred_address",
+        ("称呼", "昵称", "preferred address", "nickname"),
+        max_length=64,
+    ),
     MemoryFieldSpec(
         "schedule.timezone", ("时区", "timezone", "time zone"), "timezone", max_length=64
     ),
@@ -382,6 +393,21 @@ _ENGLISH_PROFILE_DECLARATION = re.compile(
     re.IGNORECASE,
 )
 
+#: A sentence can also ask to be *addressed* ("以后叫我小元", "希望被称呼为「太奶」")
+#: without declaring a new name.  "称呼" used to be an alias of
+#: ``profile.user_name``, so an address could only be stored by overwriting the
+#: name, and a sentence that declared both owned neither slot and had to be kept
+#: as free prose that no later rename ever reached (K3 2026-10-15: "我的名字叫
+#: 王源，以后叫我小元" left "用户名字是 Dong，希望被称呼为「太奶」" untouched,
+#: and the model answered the stale address from it).  An address now owns its
+#: own single-valued field, ``profile.preferred_address``.
+_ADDRESS_DECLARATION = re.compile(
+    r"(?:^|[\s，,。；;！!])"
+    r"(?:用户|你|请|希望|可以|想要|我|都|以后|之后|从今以后|今后|往后){0,4}\s*"
+    r"(?:称呼我为|称呼我|被称呼为|称我为|叫我)"
+    r"\s*[\"'“‘「『]?(?P<value>[^\s，,。；;！？!?\"'”’」』]{1,64}[\"”’」』]?)"
+)
+
 #: ``profile.user_name`` is single-valued: the next write to the slot replaces
 #: whatever it holds.  A sentence may only own the slot when it *is* the name.
 #: "用户自称"百岁太奶"，不熟悉科技产品。希望回答简洁、清晰、通俗易懂，避免专业术语和复杂步骤。"
@@ -399,6 +425,10 @@ _PROFILE_NOISE_CHARS = (
     "\uff08\uff09()[]\u3010\u3011:：-\u2014"
 )
 _PROFILE_NOISE = re.compile(f"[{re.escape(_PROFILE_NOISE_CHARS)}]+")
+#: Characters trimmed from the ends of a declaration clause before it is stored.
+#: Unlike ``_PROFILE_NOISE_CHARS`` this keeps quotes and brackets, so a clause cut
+#: out of "希望被称呼为「太奶」" stays balanced.
+_CLAUSE_EDGE = " \t\n，,。；;！!？?"
 _PROFILE_ENGLISH_CONTINUATION = re.compile(
     r"\b(?:and|but|because|so|also|however|though|although|while|which|who|that)\b",
     re.IGNORECASE,
@@ -591,18 +621,164 @@ def _names_the_user(text: str) -> bool:
     return declared is not None and _looks_like_declared_name(declared)
 
 
+def _address_declaration_parts(text: str) -> tuple[str, str] | None:
+    """Return the text an address declaration sits between, or None when there is none."""
+
+    value = _condensed(text)
+    match = _ADDRESS_DECLARATION.search(value)
+    if match is None:
+        return None
+    return value[: match.start()], value[match.end() :]
+
+
+def address_declaration_residual(text: str) -> str | None:
+    """Return what an address declaration leaves unsaid, or None when there is none.
+
+    Mirrors :func:`profile_declaration_residual` for the address field: the
+    residual is the sentence with the declared address cut out.
+    """
+
+    parts = _address_declaration_parts(text)
+    if parts is None:
+        return None
+    return f"{parts[0]} {parts[1]}"
+
+
+def _address_declaration_is_standalone(text: str) -> bool:
+    """Whether an address declaration only asks to be addressed."""
+
+    parts = _address_declaration_parts(text)
+    if parts is None:
+        return False
+    before, after = parts
+    if _PROFILE_NOISE.sub("", before):
+        # "我的名字叫王源，以后叫我小元" states the name first, so the
+        # address half may not own the field by itself.
+        return False
+    return not _residual_says_more(after)
+
+
+def declared_address(text: str) -> str | None:
+    """Return the address a declaration asks for, or None when it cannot be read."""
+
+    match = _ADDRESS_DECLARATION.search(_condensed(text))
+    if match is None:
+        return None
+    return (match.group("value") or "").strip(_PROFILE_NAME_EDGE) or None
+
+
+def _looks_like_declared_address(value: str) -> bool:
+    """Whether a declared value has a shape a form of address can have.
+
+    An address is looser than a name: "太奶" and "百岁太奶" are addresses but not
+    names, so the name reject openers (a value cannot *open* a name with "太")
+    do not apply.  Only a value that cannot be an address at all is refused.
+    """
+
+    address = _condensed(value).strip(_PROFILE_NAME_EDGE)
+    if not address:
+        return False
+    if address.endswith(_PROFILE_NAME_REJECT_ENDINGS):
+        return False
+    return not any(item in address for item in _PROFILE_NAME_REJECT_ANYWHERE)
+
+
+def _addresses_the_user(text: str) -> bool:
+    """Whether a declaration reads as an address and is therefore safe to slot."""
+
+    if not _address_declaration_is_standalone(text):
+        return False
+    declared = declared_address(text)
+    return declared is not None and _looks_like_declared_address(declared)
+
+
+def profile_name_clause(text: str) -> str | None:
+    """Return the name-declaration clause of a sentence, or None when it has none.
+
+    The clause is the declaration as written ("我的名字叫王源"), which is what a
+    slot record keeps, so extraction can store the name half of a sentence that
+    also declares an address.
+    """
+
+    match = _PROFILE_DECLARATION.search(_condensed(text))
+    if match is None:
+        return None
+    clause = _closed(match.group(0).lstrip(_PROFILE_NAME_EDGE).rstrip(_CLAUSE_EDGE))
+    return clause if clause and _names_the_user(clause) else None
+
+
+def profile_address_clause(text: str) -> str | None:
+    """Return the address-declaration clause of a sentence, or None when it has none."""
+
+    match = _ADDRESS_DECLARATION.search(_condensed(text))
+    if match is None:
+        return None
+    clause = _closed(match.group(0).lstrip(_PROFILE_NAME_EDGE).rstrip(_CLAUSE_EDGE))
+    if not clause or _names_the_user(clause):
+        # "叫我小元" / "请叫我小圆" are name declarations; only an address that
+        # reads as one owns the address field.
+        return None
+    return clause if _addresses_the_user(clause) else None
+
+
+def declaration_remainder(text: str, clauses: tuple[str, ...]) -> str | None:
+    """Return the durable text left once the given declaration clauses are cut out.
+
+    A sentence can carry more than the field its declaration fills
+    ("以后叫我小元，回答要简洁"): the declaration owns its slot, and this is what the
+    slot cannot hold, so the caller can keep it as a plain memory instead of
+    dropping it with the clause.
+    """
+
+    value = _condensed(text)
+    for clause in clauses:
+        if clause:
+            value = value.replace(clause, " ")
+    return value.strip(_PROFILE_NOISE_CHARS) or None
+
+
+_BRACKET_PAIRS = (
+    ("「", "」"),
+    ("『", "』"),
+    ("“", "”"),
+    ("‘", "’"),
+    ("（", "）"),
+    ("(", ")"),
+)
+
+
+def _closed(clause: str) -> str:
+    """Close a bracket the declaration pattern stopped just before.
+
+    The pattern ends a declared value at the closing quote, so a clause cut out
+    of "用户自称「小圆」" would be stored without its "」".  Re-closing keeps
+    the stored clause readable.
+    """
+
+    for opening, closing in _BRACKET_PAIRS:
+        if clause.count(opening) > clause.count(closing):
+            return f"{clause}{closing}"
+    return clause
+
+
 def slot_residual(text: str, slot: str | None) -> str | None:
     """Return the durable content a write to ``slot`` would otherwise drop.
 
     Slot records are single-valued, so revising one replaces its text outright.
     When the text it holds says something the slot cannot keep -- the
-    communication-style preference bundled into a name record -- that content has
-    to be written back as a plain memory instead of vanishing with the replace.
+    communication-style preference bundled into a name record, or a second
+    declaration bundled into an address record -- that content has to be written
+    back as a plain memory instead of vanishing with the replace.
     """
 
-    if slot != "profile.user_name" or _profile_declaration_is_standalone(text):
+    if slot == "profile.preferred_address":
+        if _address_declaration_is_standalone(text):
+            return None
+        residual = address_declaration_residual(text)
+    elif slot == "profile.user_name" and not _profile_declaration_is_standalone(text):
+        residual = profile_declaration_residual(text)
+    else:
         return None
-    residual = profile_declaration_residual(text)
     if residual is None:
         return None
     return residual.strip(_PROFILE_NOISE_CHARS) or None
@@ -655,6 +831,8 @@ def preference_slot(text: str) -> str | None:
     value = _normalized(text)
     if not is_question_like(value) and _names_the_user(text):
         return "profile.user_name"
+    if not is_question_like(value) and _addresses_the_user(text):
+        return "profile.preferred_address"
 
     if any(item in value for item in ("时区", "timezone", "time zone")):
         return "schedule.timezone"
@@ -789,7 +967,10 @@ __all__ = [
     "L3_FIELD_DICTIONARY",
     "MemoryFieldSpec",
     "CONTENT_LIMITS",
+    "address_declaration_residual",
     "content_limit",
+    "declaration_remainder",
+    "declared_address",
     "field_dictionary",
     "field_spec",
     "field_value_failure",
@@ -798,7 +979,9 @@ __all__ = [
     "memory_slot",
     "normalize_field_value",
     "preference_slot",
+    "profile_address_clause",
     "profile_declaration_residual",
+    "profile_name_clause",
     "resolve_field_value",
     "resolve_slot",
     "slot_residual",

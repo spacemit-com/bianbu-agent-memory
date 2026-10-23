@@ -89,3 +89,48 @@ def test_cli_prints_json_on_success(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert json.loads(captured.out) == payload
     assert captured.err == ""
+
+
+def test_cli_import_reads_the_document_and_passes_the_confirmation_token(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    document = {
+        "format": "bianbu-agent-memory.export.v1",
+        "session_events": [],
+        "session_summaries": [],
+        "long_term_memories": [],
+    }
+    source = tmp_path / "export.json"
+    source.write_text(json.dumps(document), encoding="utf-8")
+    captured: dict = {}
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        @classmethod
+        def connect(cls, *args, **kwargs):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info) -> bool:
+            return False
+
+        @property
+        def privacy(self):
+            class _Privacy:
+                def import_data(self, payload, *, confirm_token):
+                    captured["payload"] = payload
+                    captured["token"] = confirm_token
+                    return {"imported": {"long_term_memories": 2}}
+
+            return _Privacy()
+
+    monkeypatch.setattr(cli, "MemoryClient", _Client)
+    cli.main(["import", str(source), "--confirm-token", "token"])
+
+    assert captured["payload"] == document
+    assert captured["token"] == "token"
+    assert '"long_term_memories": 2' in capsys.readouterr().out

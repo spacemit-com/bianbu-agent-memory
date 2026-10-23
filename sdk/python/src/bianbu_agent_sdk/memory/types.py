@@ -203,6 +203,7 @@ class MemoryRecallItem:
     # mark important" cannot recover the mark from text: the reserved tag is
     # the only place it lives, so dropping it here made the mark invisible.
     tags: tuple[str, ...] = ()
+    text_truncated: bool = False
 
     @property
     def target(self) -> str:
@@ -222,6 +223,7 @@ class MemoryRecallItem:
             "source": self.source,
             "score": self.score,
             "relevance": self.relevance,
+            "text_truncated": self.text_truncated,
         }
         if self.slot:
             result["slot"] = self.slot

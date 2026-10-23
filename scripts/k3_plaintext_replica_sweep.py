@@ -19,9 +19,10 @@ SEC-05（明文迁移）验收口径是“生成加密库、暂存文件可清�
   只要头部出现记忆集合键（``long_term_memories`` / ``session_events`` /
   ``session_summaries`` / ``memory_embeddings``），并且真能解析出这些集合。
 
-永远不会被删的：现网库 ``/var/lib/bianbu-agent-memory/memory.db``、``capsules/`` 里的
-加密备份、``*.keypkg`` / ``*-secret`` / ``*.key``、以及任何**正被进程打开**的文件
-（``/proc/*/fd`` 里有引用的一律跳过）。
+永远不会被删的：现网库 ``/var/lib/bianbu-agent-memory/memory.db``、
+``*.keypkg`` / ``*-secret`` / ``*.key``、以及任何**正被进程打开**的文件
+（``/proc/*/fd`` 里有引用的一律跳过）。``capsules/`` 只在旧设备上存在，云备份退役后
+不再创建，但历史目录仍按同一规则跳过。
 
 用法（K3）：
 
@@ -44,7 +45,6 @@ from pathlib import Path
 DEFAULT_ROOTS = ("/home", "/var/lib/bianbu-agent-memory", "/tmp", "/var/tmp")
 PROTECTED_PATHS = (
     "/var/lib/bianbu-agent-memory/memory.db",
-    "/var/lib/bianbu-agent-memory/capsules",
     "/etc/bianbu-agent-memory",
 )
 PROTECTED_SUFFIXES = (".keypkg", ".secret", ".key", ".pem")

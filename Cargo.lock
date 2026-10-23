@@ -805,21 +805,17 @@ dependencies = [
 name = "memory-store"
 version = "0.1.6"
 dependencies = [
- "aes-gcm",
- "base64",
  "flate2",
  "hex",
  "libc",
  "memory-core",
  "memory-protocol",
- "rand",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "uuid",
- "zeroize",
 ]
 
 [[package]]

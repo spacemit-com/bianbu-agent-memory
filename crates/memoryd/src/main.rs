@@ -7,7 +7,7 @@ use memory_core::{now_ms, MAX_FRAME_BYTES, PROTOCOL_VERSION};
 use memory_protocol::{RequestEnvelope, ResponseEnvelope, ServiceError};
 use memory_store::{
     cleanup_migration_temporary_files, cleanup_plaintext_backups, migrate_plaintext_database,
-    report_namespaces, HttpBackupStorage, Store,
+    report_namespaces, Store,
 };
 use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 use registry::{bind_runtime_context, detect_device_mac, IdentityResolver, PeerIdentity};
@@ -93,28 +93,12 @@ struct Arguments {
     allow_plaintext: bool,
     #[arg(long, default_value_t = false)]
     dbus: bool,
-    #[arg(long)]
-    backup_directory: Option<PathBuf>,
-    #[arg(long)]
-    capsule_key_file: Option<PathBuf>,
     /// Shared secret used by the trusted local Memory UI adapter to create
     /// short-lived, one-time confirmation tokens for destructive operations.
     /// The secret is read once at startup and is never exposed through UDS or
     /// the HTTP adapter.
     #[arg(long)]
     adapter_confirmation_secret_file: Option<PathBuf>,
-    /// HTTPS endpoint hosting the encrypted Agent Memory Capsule file API.
-    /// HTTP is accepted only for loopback development tests.
-    #[arg(long)]
-    backup_base_url: Option<String>,
-    /// File containing the cloud API key. The key is never put on the process
-    /// command line; the file may be group-readable by bianbu-agent only.
-    #[arg(long)]
-    backup_api_key_file: Option<PathBuf>,
-    /// Environment variable name containing the cloud API key. Prefer the
-    /// file option for production deployments.
-    #[arg(long)]
-    backup_api_key_env: Option<String>,
     #[arg(long, default_value_t = false)]
     dbus_session_bus: bool,
     #[arg(long, default_value_t = 60)]
@@ -187,59 +171,10 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     prepare_socket(&arguments.socket)?;
-    let capsule_key = match arguments.capsule_key_file.as_deref() {
-        Some(path) => Some(key_package::read_capsule_key_file(path)?),
-        None => None,
-    };
-    let backup_base_url = arguments
-        .backup_base_url
-        .clone()
-        .or_else(|| std::env::var("BIANBU_MEMORY_BACKUP_BASE_URL").ok())
-        .filter(|value| !value.trim().is_empty());
-    let backup_api_key = read_backup_api_key(&arguments)?;
     let adapter_confirmation_secret = read_adapter_confirmation_secret(&arguments)?;
-    let cloud_configured = backup_base_url.is_some() || backup_api_key.is_some();
-    if cloud_configured && (backup_base_url.is_none() || backup_api_key.is_none()) {
-        return Err(
-            "--backup-base-url and an API key file/environment must be configured together".into(),
-        );
-    }
-    if arguments.backup_directory.is_some() && cloud_configured {
-        eprintln!("bianbu-agent-memoryd: cloud backup configured; --backup-directory is ignored");
-    }
-    if arguments.backup_directory.is_some() != capsule_key.is_some() && !cloud_configured {
-        return Err("--backup-directory and --capsule-key-file must be configured together".into());
-    }
-    let store = if let (Some(base_url), Some(api_key), Some(capsule_key)) = (
-        backup_base_url.as_deref(),
-        backup_api_key.as_deref(),
-        capsule_key.as_deref(),
-    ) {
-        let adapter = HttpBackupStorage::new(base_url, api_key)?;
-        Store::open_with_backup_adapter(
-            &arguments.database,
-            database_key.as_deref().map(Vec::as_slice),
-            Arc::new(adapter),
-            capsule_key,
-        )?
-    } else if cloud_configured {
-        return Err("cloud backup requires --capsule-key-file as well as URL and API key".into());
-    } else {
-        match (
-            arguments.backup_directory.as_deref(),
-            capsule_key.as_deref(),
-        ) {
-            (Some(directory), Some(key)) => Store::open_with_backup(
-                &arguments.database,
-                database_key.as_deref().map(Vec::as_slice),
-                directory,
-                key,
-            )?,
-            _ => match database_key.as_deref() {
-                Some(key) => Store::open_encrypted(&arguments.database, key)?,
-                None => Store::open(&arguments.database)?,
-            },
-        }
+    let store = match database_key.as_deref() {
+        Some(key) => Store::open_encrypted(&arguments.database, key)?,
+        None => Store::open(&arguments.database)?,
     };
     if arguments.development_identity {
         let migration =
@@ -359,64 +294,6 @@ fn read_adapter_confirmation_secret(
         return Err("adapter confirmation secret is empty".into());
     }
     Ok(Some(bytes))
-}
-
-fn read_backup_api_key(
-    arguments: &Arguments,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let file_path = arguments.backup_api_key_file.clone().or_else(|| {
-        std::env::var("BIANBU_MEMORY_BACKUP_API_KEY_FILE")
-            .ok()
-            .map(PathBuf::from)
-    });
-    let from_file = if let Some(path) = file_path.as_deref() {
-        let metadata = fs::metadata(path)?;
-        if !metadata.is_file() {
-            return Err(format!(
-                "backup API key path is not a regular file: {}",
-                path.display()
-            )
-            .into());
-        }
-        // Group read is required by the packaged bianbu-memory service account;
-        // group/other write or any other-user access would expose the credential.
-        if metadata.permissions().mode() & 0o027 != 0 {
-            return Err(format!(
-                "backup API key file permissions are too broad: {}",
-                path.display()
-            )
-            .into());
-        }
-        Some(fs::read_to_string(path)?)
-    } else {
-        None
-    };
-    let from_env = if let Some(variable) = arguments.backup_api_key_env.as_deref() {
-        if variable.is_empty()
-            || !variable
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || character == '_')
-        {
-            return Err("--backup-api-key-env must be a valid environment variable name".into());
-        }
-        std::env::var(variable).ok()
-    } else {
-        std::env::var("BIANBU_MEMORY_BACKUP_API_KEY").ok()
-    };
-    if from_file.is_some() && from_env.is_some() {
-        return Err("configure only one of backup API key file or environment".into());
-    }
-    let value = from_file.or(from_env);
-    value
-        .map(|value| {
-            let trimmed = value.trim_matches([' ', '\t', '\r', '\n']);
-            if trimmed.is_empty() || trimmed.chars().any(|character| character.is_control()) {
-                Err("backup API key must be non-empty and contain no control characters".into())
-            } else {
-                Ok(trimmed.to_owned())
-            }
-        })
-        .transpose()
 }
 
 fn prepare_database_key(
@@ -653,10 +530,10 @@ fn verify_confirmation(
     adapter_confirmation_secret: Option<&[u8]>,
 ) -> bool {
     if request.method != "long_term.forget"
-        && request.method != "backup.restore"
         && request.method != "privacy.clear_history"
         && request.method != "privacy.clear_all"
         && request.method != "privacy.export_data"
+        && request.method != "privacy.import_data"
     {
         return false;
     }

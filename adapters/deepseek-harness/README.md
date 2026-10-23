@@ -1,5 +1,13 @@
 # DeepSeek Harness adapter
 
+## Integration boundary
+
+This adapter uses the public plugin hooks and tool registry of DeepSeek
+Harness 0.1.0-rc.6. Install it as a separate plugin; do not modify the host
+source. Host capabilities that are not exposed to plugins are outside this
+adapter's supported surface. Chat-tool acceptance, lifecycle persistence,
+and daemon administration are separate test scopes.
+
 Lifecycle extension: `agent/pre-step` records the run-start watermark and
 `agent/session-start` clears pending confirmations. `session/event` records
 aborted/failed `turn/end` events and persists `compaction/summary` at successful

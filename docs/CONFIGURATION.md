@@ -1,5 +1,7 @@
 # Agent Memory 配置说明
 
+[English](CONFIGURATION_EN.md) | [简体中文](CONFIGURATION.md)
+
 ## 1. 配置所有权
 
 Memory 的产品配置由 memoryd 管理，默认文件为：
@@ -26,25 +28,28 @@ privacy.settings.update
 
 | 配置项（API 名称） | 默认值 | 作用域 | Agent 是否可直接配置 | 说明 |
 | --- | --- | --- | --- | --- |
-| `memory_enabled` | `true` | 账号/Agent/空间覆盖，产品文件提供默认值 | 受信集成方可请求 | 关闭后 memoryd 拒绝 L1-L3 数据操作 |
+| `memory_enabled` | `true` | 账号/Agent/空间覆盖，产品文件提供默认值 | 受信集成方可请求 | 关闭后 memoryd 拒绝 L1-L3 的写入与召回操作 |
 | `retention_days` | `0`（永久） | 账号/Agent/空间覆盖，产品文件提供默认值 | 受信集成方可请求 | 仅允许 `0/7/30/90` |
 | `audit_enabled` | `true` | 账号/Agent/空间覆盖，产品文件提供默认值 | 受信集成方可请求 | 关闭也不能绕过强制审计动作 |
-| `backup_enabled` | `false` | 账号/Agent/空间覆盖；文件字段为 `cloud_backup_enabled` | 受信集成方可请求 | `default`/`local:*` 账号不能开启 |
-| `backup_frequency` | `weekly` | 账号/Agent/空间覆盖 | 受信集成方可请求 | `manual/daily/weekly/monthly` |
-| `backup_scopes` | 四类（`preferences`/`development_habits`/`schedule_habits`/`important`） | 账号/Agent/空间覆盖 | 受信集成方可请求 | 仅表示范围，不等于已授权上传；不含对话摘要（MEM-L4-02）；`important` 承载用户显式标记为重要的 L3 记录（保留标签 `important`，非 `slot:`），见 §6.1；存量值在读取/写回/定时备份时自动收敛 |
-| `sensitive_action_confirmation` | `standard` | 产品级 | 只能经受控管理接口 | 允许 `standard/strict`；命令确认由 Runtime/Security 管理 |
+| ~~`backup_enabled`~~ | — | 已退役 | — | 2026-10-16 起云备份下线；`privacy.settings.update` 仍接受旧字段但忽略，`memory.config.json` 中的 `cloud_backup_enabled` 读取时丢弃，不出现在响应里 |
+| ~~`backup_frequency`~~ | — | 已退役 | — | 同上；旧字段可发送但被忽略，旧文件中的键在下一次写入后消失 |
+| ~~`backup_scopes`~~ | — | 已退役 | — | 同上；`important` 仍是 L3 记录上的保留标签，与云备份无关 |
+| `sensitive_action_confirmation` | `standard` | 产品级 | 只能经受控管理接口 | 允许 `loose/standard/strict`；命令确认由 Runtime/Security 管理 |
 | `preference_auto_apply_enabled` | `true` | 产品级 | 只能经受控管理接口 | Runtime 是否自动应用偏好 |
 | `development_habit_auto_apply_enabled` | `true` | 产品级 | 只能经受控管理接口 | Runtime 是否自动应用开发习惯 |
 | `recent_turn_limit` | `5` | 产品级 | 只能经受控管理接口 | `1..50` |
 | `recent_session_limit` | `5` | 产品级 | 只能经受控管理接口 | `1..20` |
-| `summary_interval_turns` | `5` | 产品级 | 只能经受控管理接口 | `1..50`，完整轮次触发摘要 |
+| `summary_interval_turns` | `5` | 产品级 | 只能经受控管理接口 | `1..50`，每 N 个完整轮次触发摘要 |
 | `summary_retention_days` | `7` | 产品级 | 只能经受控管理接口 | `1..365` |
 | `timezone` | `Asia/Shanghai` | 产品级 | 只能经受控管理接口 | UTC 或 IANA 时区名 |
-| `local_device_id` | `k3-development` | 产品级 | 只能经受控管理接口 | 设备备份元数据，不是 Runtime 身份 |
+| `local_device_id` | `k3-development` | 产品级 | 只能经受控管理接口 | 本地设备标识元数据，不是 Runtime 身份 |
 | `summary_model` | disabled | 产品级 | 只能经受控管理接口 | 见下节 |
 | `max_database_bytes` | `536870912` | 产品级本地资源上限 | 只能经受控管理接口 | SQLite 主库及 WAL/SHM 的总字节上限，`16 MiB..8 GiB` |
-| `max_backup_bytes` | `536870912` | 产品级本地资源上限 | 只能经受控管理接口 | 本地 Capsule 目录上限，`16 MiB..8 GiB`；远端 Adapter 仍由服务端配额负责 |
+| ~~`max_backup_bytes`~~ | — | 已退役 | — | 随云备份下线；旧字段可发送但被忽略，旧文件中的键在下一次写入后消失 |
 | `min_free_bytes` | `67108864` | 产品级本地资源上限 | 只能经受控管理接口 | 数据写入前必须保留的文件系统可用空间，`0..8 GiB` |
+
+退役字段只在同一请求还包含至少一个有效设置时才会被接受；只发送退役字段仍会
+返回 `InvalidArgument: at least one setting is required`。
 
 账号/Agent/空间覆盖项实际存储在 SQLite 的 `memory_settings` 表中，主键为：
 
@@ -108,10 +113,9 @@ memoryd 后返回 `MemoryDisabled`。
 
 ## 5. 语义检索 Embedding 配置
 
-`embedding` 结构如下（`privacy.settings.update` 传入；**0.1.9 起默认开启**，
-指向 spacemit-ai-gateway 的 Embed 域 `http://127.0.0.1:18790/v1/embed`，
-gateway 或模型缺失时静默降级为纯词法检索；设置页开关或显式 `enabled:false`
-段落可关闭）：
+`embedding` 段通过 `privacy.settings.update` 整体传入，默认开启，指向
+spacemit-ai-gateway 的 Embed 域；gateway 或模型不可用时自动降级为纯词法检索。
+设置页开关或显式 `enabled: false` 可关闭。
 
 ```json
 {
@@ -129,246 +133,63 @@ gateway 或模型缺失时静默降级为纯词法检索；设置页开关或显
 }
 ```
 
-- `base_url` 只接受 `http://`（本机服务，gateway 的 Embed 域），启用时必填；
-  `model` 是 **gateway 侧的模型 id**（不是自由标签），同时参与向量过期检测——
-  更换模型或维度后，旧向量自动判 stale 并由后台任务（60 秒周期）按新配置重建，
-  无需人工清理。把该字段钉在真实服务的模型 id 上，是为了让 gateway 侧换模型能
-  被自动发现，而不是在两边维度都是 1024 时静默混用两个向量空间；
-- **升级迁移**：0.1.9~0.1.16 会把当时的默认值
-  （`http://127.0.0.1:18801/v1` + `qwen3-embedding-0.6b`）持久化进这一节，
-  而这一节是显式配置、新默认值对它的设备不生效。0.1.17 起 `read_config` 会把
-  **恰好等于这对旧默认值**的配置在读取时收敛到网关 endpoint 与网关模型 id
-  （见 `converged_embedding`，与 `converged_backup_scopes` 同一套做法）：其余
-  字段不动，任何自定义 endpoint 也不动。所以运维自托管的设备只需要保证
-  `base_url` 或 `model` 与旧默认值不完全一致，就不会被迁移；
-- **收敛值在启动时写回文件**：收敛只发生在内存里，而 `memory.config.json` 是运维
-  在守护进程之外唯一能读到的副本，于是升级后的设备会出现“文件写着 `18801`、服务实际
-  在打 gateway”的错位。`initialize_product_config` 在启动时（持有配置锁、不可能与任何
-  请求竞争的时刻）把收敛结果落盘，失败只记日志、不阻塞启动。`system.health.embedding`
-  把两半都报出来：`base_url`/`model` 是生效值，`config_file_matches=false` 表示磁盘
-  副本还没写回（见 §9）；
-- `dims` 64..=8192；`format` 支持 `int8`（默认，对称 int8 量化，余弦相似度对
-  量化尺度不变）与 `f32`；`max_latency_ms` 100..=60000（查询路径实际取
-  `min(max_latency_ms, 1500)`，为 2 秒检索预算保留词法阶段）；
-- `batch_size` 1..=128，是**后台回填单次请求的条数上限**。2026-09-17 起它不再
-  是唯一约束：单次请求还会按 token 预算截断（固定 2560 estimated token，见
-  `max_text_tokens`），于是短文本按条数截断、长文本按 token 截断。K3 实测
-  （`--parallel 1`、`-t 8`、Q8_0，文本唯一即无 prompt cache 命中）：200 字符
-  条目 12 条 ≈ 7 s（3.2 ms/token），17/32 条分别是 7.9 s / 15.9 s（3.2~3.4
-  ms/token）——每 token 成本几乎不变，把更多 token 塞进一次请求既不提高吞吐、
-  又会拉长单次延迟并挤占在线嵌入，所以 token 上限取保守值；
-- `index_timeout_ms` 100..=600000，是**索引路径**（后台批量回填与提交后单条
-  嵌入）的每请求读写超时，与检索预算解耦。K3 实测（唯一文本、无缓存命中）：
-  1291 prompt token 单条 6.5 s、1843 10.3 s、2211 13.5 s、2571 18.2 s ——
-  **prefill 成本是超线性的**（约 5.0 → 7.1 ms/token）。默认从 10000 提到
-  **30000**，依据是「最坏单次请求 + 可能排在它后面的提交后单条嵌入」这一组合：
-  当前参数下为 10.3 s + 10.3 s ≈ 20.6 s，占预算 69%；沿用交互预算 1500ms 会让
-  大批量空间进入永久 ServerUnavailable 重试循环（2026-09-12 生产事故根因）。
-  旧配置文件缺此字段时按默认 30000 反序列化；
-- `inline_timeout_ms` 100..=2000，是**提交后单条内联嵌入**的读写超时（默认
-  **500**）。自 2026-09-24 起，提交后单条内联嵌入不再使用 `index_timeout_ms`，
-  改由本字段约束（`index_timeout_ms` 只约束后台批量回填）：写事务在此之前已经
-  提交，让写响应一直等到 30 s 索引预算只会制造"客户端已超时、库里其实有这条"
-  的假失败（MCP 工具预算 2 s）。超预算时该行交给后台回填补齐，journal 记一行
-  `[semantic-embed] embedding failed for memory ... (inline budget 500ms,
-  backfill will retry)`。老配置文件缺失此字段时按默认 500 反序列化。
-- `max_text_tokens` 64..=8192，是单条文本送入 embedding 服务前的 **token 预算**
-  （默认 **2560**，约等于 1843 个真实 token）。服务端窗口（provisioner 为该模型
-  钉住的 `--ctx-size=4096`）是硬上限，超出的**单条**请求直接被 400
-  （`exceed_context_size_error`）拒绝而不会自动截断（实测 2048 窗口下 2560
-  字符即 1843 token 通过、3072 字符即 2211 token 被拒），因此裁剪必须发生在
-  客户端。超预算的文本按「保留头部 + 保留尾部、中间以 `[...]` 省略」处理
-  （尾部占 25%），并在 journal 打一行 `[semantic-embed] clipped text` 警告；
-  旧配置文件缺此字段时按默认 2560 反序列化。**默认值不是按窗口比例取的**：
-  窗口翻倍到 4096 后按比例应取 3584，但实测单条 2571 token 要 18.2 s，
-  与「排在后面的单条嵌入」组合会到 36 s，超出 30 s 超时，所以停在 2560；
-  若要取 3584 必须同时把 `index_timeout_ms` 提到 ≥ 45000。调整该值前必须先
-  确认服务的 `--ctx-size`：取值接近或超过窗口会让长记忆重新落到
-  「400 → 永远没有向量」的失败路径。单次批量请求的 token 上限是**固定常量**
-  `EMBEDDING_BATCH_TEXT_TOKENS = 2560`（不随本字段放大，避免调大本值后单批耗时
-  悄悄翻倍），且至少保证一条文本单独成批。实测 2 条旧预算文本（2×1291 token）
-  = 2582 token ≈ 12.7 s、3 条 = 3873 token ≈ 19.0 s 都成功返回——单槽服务会把
-  超过 `--ctx-size` 的**批量**逐条送进上下文，不会因此返回 400，所以上限是
-  **延迟**约束而非窗口约束；
-- `query_instruct` 只加在查询侧（Qwen3-Embedding 惯例），记忆写入侧不加前缀；
-  前缀 A/B 正式评估结论见 `docs/K3_EMBEDDING_BENCHMARK.md`；
-- 行为：put/revise 事务提交后 best-effort 单条嵌入（失败在 journal 记一行
-  `[semantic-embed] embedding failed for memory ...`，由后台补齐，检索本身仍
-  静默回退）；
-  `sensitivity=secret` 永不嵌入（与 FTS 同策略）；检索在 `long_term.search_headers`
-  内做向量召回 + RRF(k=60) 融合，embedding 禁用、失败或超时一律静默回退到
-  FTS 级联（MEM-NFR-02 降级要求）；
-- 向量属于派生数据：不进入备份胶囊，restore 后自动重建；`forget`、`clear_all`
-  等删除路径同步清理；
-- 打包部署：Memory 不再自带推理 unit 与模型下载脚本，模型的下载、加载、检索
-  全部由 spacemit-ai-gateway 的 Embed 域承担（`/v1/embed/models`、
-  `/models/{id}/download`、`/models/load`、`/embeddings`）。装包只会 enable
-  并后台触发一次 `bianbu-agent-memory-embedding-provision.service`；失败只记
-  日志，FTS5 降级不受影响：
+| 字段 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `true` | 布尔值 | 是否启用语义检索；关闭后只走词法检索 |
+| `base_url` | `http://127.0.0.1:18790/v1/embed` | `http://` 地址，最长 2048 字符 | Embedding 服务地址；启用时必填，默认指向本机网关 |
+| `model` | `qwen3-embedding-0.6b-q8_0` | gateway 模型 id | 必须是 gateway 侧真实模型 id；更换模型或维度会使旧向量失效并触发重建 |
+| `dims` | `1024` | `64..8192` | 向量维度，必须与模型输出一致 |
+| `format` | `int8` | `int8` / `f32` | 向量存储格式；`int8` 为对称量化 |
+| `batch_size` | `32` | `1..128` | 后台回填单次请求的条数上限；单次请求同时受固定 2560 token 预算约束 |
+| `max_text_tokens` | `2560` | `64..8192` | 单条文本进入 Embedding 前的 token 预算；超预算时保留头尾并省略中间 |
+| `max_latency_ms` | `1500` | `100..60000` | 查询侧延迟预算；实际取 `min(max_latency_ms, 1500)`，为词法阶段留出时间 |
+| `index_timeout_ms` | `30000` | `100..600000` | 后台批量回填与索引路径的每请求超时 |
+| `inline_timeout_ms` | `500` | `100..2000` | 写事务提交后单条内联嵌入的超时；超时后交给后台回填 |
+| `query_instruct` | Qwen3-Embedding 推荐查询前缀 | 最长 512 字符 | 只加在查询侧，写入侧不加前缀；留空表示不添加 |
 
-```bash
-# 自动路径：装包即后台 provision（下载 → 加载 → 金样自检）。gateway 不在时
-# 记一行日志并以 0 退出，不阻塞、不报错。
-# 手动补齐（首次下载失败、gateway 后装、或 gateway 重启后模型被卸载）：
-sudo systemctl restart bianbu-agent-memory-embedding-provision.service
-# 只查看状态、不做任何变更：
-sudo /usr/libexec/bianbu-agent-memory-embedding-provision --check
-# 0.1.9 起语义索引默认开启：无需再改 embedding.enabled。关闭走设置页
-# 开关（或 settings.update 发整段 enabled:false）；另有
-# AGENT_MEMORY_EMBEDDING_DISABLED=1 环境变量可只压制"开箱默认"
-# （显式配置段落不受影响，供运维/密闭测试用）。
-```
+行为约定：
 
-provisioner 用**显式 `extra_args`** 加载该模型（`--pooling last
---embd-normalize 2 --ctx-size 4096 --parallel 1`），而不是继承 gateway 的
-`embed.default_args`；加载后还会拿打包进 deb 的金样向量
-`/usr/share/bianbu-agent-memoryd/embedding_parity_golden.json` 自检
-（余弦 ≥ 0.999），低于阈值即判失败。
+- `put` / `revise` 提交后做一次 best-effort 内联嵌入；失败只记日志，由后台补齐，
+  检索自动回退到 FTS。
+- 两路都有结果时使用向量召回 + RRF 融合；Embedding 关闭、失败或超时一律回退词法检索。
+- `sensitivity=secret` 的记忆永不嵌入。
+- 向量是派生数据：restore 后自动重建，`forget` / `clear_all` 时同步清理。
+- 模型的下载与加载由 spacemit-ai-gateway 负责；本节只描述 memoryd 侧的连接参数。
 
-> **为什么不能依赖 gateway 的 embed 默认参数**：`embed.backend` 与
-> `embed.default_args` 是 embed 域**全局**项，Agent OS 意图模块的
-> `bibit-embed`（Q4_0）与 Memory 共用该域，而
-> `/opt/bibit-intent/deploy/configure-gateway-embedding.py` 会在部署时改写
-> `embed.default_args`。若 Memory 的模型继承这些默认值，一次 bibit 重新部署就
-> 可能让它在维度不变（1024）的前提下换到另一个向量空间，memoryd 无从察觉。
-> 因此 Memory 既不读也不写这两项，也不调用 `/models/switch`（避免抢走 bibit 的
-> `_current_model` 指针）。详见 `docs/GATEWAY_EMBEDDING_INTEGRATION.md`。
->
-> **平台约束（K3 实测）**：推理进程由 gateway 拉起
-> （`spacemit-ai-gateway.service` 以交互用户 `bianbu` 运行，其 postinst 继承
-> 安装者身份）——厂商 SPERT NPU 运行时通过 `/dev/shm/spert-arbiter-*`
-> （0600，首个 NPU 进程创建）仲裁 NPU 访问，**拒绝属主 uid 之外的一切进程**
-> （含 root）。与 bibit/Hermes 栈同 uid 才能共享 NPU；多 uid 共享需平台升级
-> libspert。详见 `docs/K3_EMBEDDING_BENCHMARK.md` §7.5。
->
-> **升级残留**：从自带推理 unit 的版本升级后，
-> `/var/lib/bianbu-agent-memory/models/` 与 `/etc/bianbu-agent-memory/embedding.env`
-> 不再被任何组件读取，包**不会**自动删除它们；确认 gateway 侧模型可用后可手工清理。
+## 6. 已退役配置与兼容项
 
-## 6. 云备份相关配置
+2026-10-16 产品变更：记忆数据云备份下线，改为本地导出/导入。本包不再读取
+`backup.env`，并已从 CLI 移除 `--backup-directory`、`--capsule-key-file`、
+`--backup-base-url`、`--backup-api-key-*` 等旧参数；安装包提供的 unit 也不再包含
+它们。本包同样不再创建 `/var/lib/bianbu-agent-memory/capsules` 和
+`/etc/bianbu-agent-memory/capsule-key`。如果系统中残留旧版 unit 或 drop-in 仍带这
+些参数，memoryd 会因未知参数启动失败，升级时需同步替换为当前 unit。云备份实现
+保留在特性分支 `feature/mem-l4-cloud-backup`，未联调前不进入 main。
 
-云备份 API-Key 不放在 `memory.config.json`。服务环境文件示例：
+`memory.config.json` 中由旧版本写入的 `cloud_backup_enabled`、
+`backup_frequency`、`backup_scopes`、`max_backup_bytes` 在读取时被**丢弃**、
+不参与校验、也不会写回：旧文件仍能加载，下一次设置写入后这四个键即从文件中
+消失；其它未知键依旧按 `deny_unknown_fields` 拒绝。`privacy.settings.get`
+不再返回 `backup_enabled`/`backup_supported`。
 
-```text
-/etc/bianbu-agent-memory/backup.env
-BIANBU_MEMORY_BACKUP_BASE_URL=https://memory.example.invalid
-BIANBU_MEMORY_BACKUP_API_KEY_FILE=/etc/bianbu-agent-memory/backup-api-key
-```
+## 7. 通过受信宿主或 SDK 设置
 
-API-Key 文件应由 root 拥有、权限 `0640`，仅允许 memory 服务组读取。开启
-`backup_enabled` 还必须同时满足：正式认证账号、Capsule 密钥、Backup Adapter、
-用户授权范围和有效的云端 API-Key。
+BiBit 设置页通过宿主能力 `service:memory` 调用 `privacy.settings.update`；其他
+受信集成方直接调用 SDK 的 `client.privacy.update_settings(...)`。Runtime 已在
+2026-09-21 移除 `/api/v1/plugin-consoles/...` 管理路由，不要再按旧接口接入。
 
-### 6.1 用户显式标记的“重要标记”
+请求体不应传入账号或 Agent 身份字段；这些值来自 Runtime 的可信进程上下文。
+`summary_model` 与 `embedding` 两个结构化配置也通过同一入口整体传入（缺失字段按
+默认值补齐，因此每次都应发送完整结构）。当前工程没有把配置修改暴露给大模型 Tool，
+避免模型在没有用户确认的情况下改变记忆、保留期限或审计策略。
 
-`important` 是保留标签，不是 `slot:`：`validate_tags` 限制每条记录最多一个槽位，用槽位会与记录自己的字段槽位冲突。标记与记录的内容类型正交，因此单独占一个备份范围：`preferences` 范围只匹配`kind == "preference"`，一条被标记的重要 `fact` 挂在那里会被静默漏掉。
+## 8. 进程级环境变量
 
-- 只由显式动作产生，**不从字面推断**：标记决定记录能否离开设备，模型不得代用户决定；
-- 标记/取消标记是一次普通 `long_term.revise`，复用既有 revision 与 Capsule 路径，`tags` 本来就在 Capsule 里，因此不引入新的端云格式；
-- 入口：CLI `mark-important`/`unmark-important`、SDK `long_term.mark_important`、MCP 工具 `action="mark_important"`；
-- 标记本身不上传任何东西：真正授权上传的是 `backup_scopes` 里的 `important`；
-- 升级时只对“仍是出厂默认值”的设备追加该范围（`migrations/0013_add_important_backup_scope.sql`），用户自定义过的范围列表不动。
-- 召回结果在 `tags` 里回显该标记（非空时才输出）：模型和用户据此判断哪些记忆被标记为重要，不必从正文推断；
-
-## 7. 通过 Runtime 设置
-
-受信集成方应调用 Runtime Plugin Console：
-
-```text
-POST /api/v1/plugin-consoles/bianbu.memory/actions/settings.update
-```
-
-例如：
-
-```json
-{
-  "memory_enabled": true,
-  "retention_days": 7,
-  "audit_enabled": true,
-  "preference_auto_apply_enabled": true,
-  "development_habit_auto_apply_enabled": false,
-  "recent_turn_limit": 5,
-  "recent_session_limit": 5,
-  "summary_interval_turns": 5,
-  "summary_retention_days": 7,
-  "sensitive_action_confirmation": "strict"
-}
-```
-
-Runtime 读取自己的受信身份并调用 `client.privacy.update_settings(...)`；请求体不
-应传入账号或 Agent 身份字段。`summary_model` 与 `embedding` 两个结构化配置也通过
-同一入口整体传入（缺失字段按默认值补齐，因此每次都应发送完整结构）。当前工程
-没有把配置修改暴露给大模型 Tool，避免模型
-在没有用户确认的情况下改变记忆、保留期限、审计或云备份策略。
-
-## 8. 需求清单中的非 Memory 配置
-
-需求清单“5.1 记忆相关隐私配置”中，以下项目应标注为关联能力：
-
-- 命令执行预览：Runtime/Security 的命令授权和确认策略；
-- 社区知识库、本地文件全盘检索、向量/rerank：BiBit/Agent OS 检索链路；
-- 端云模型 Fallback 和网络白名单：Runtime/Security/模型路由；
-- API-Key 的 TEE/Secret Broker 管理：安全模块和部署系统。
-
-Memory 只接收已经由 Runtime 解析并授权的数据范围，不负责这些能力的 UI、模型
-路由或命令执行策略。
-
-## 9. 运行诊断（health 完整性检查）
-
-`system.health` 的 `status` / `database` 来自一次独占的 `PRAGMA quick_check`。整库
-检查在 K3 现网库上约 406 ms，且该库是 SQLCipher：**索引完好时它也会报**
-`malformed inverted index for FTS5 table main.long_term_fts[2]`，实测在写入高峰后
-仍会持续复现约 100 s（连续 15 次取样）随后自行消失，之后不再出现，检索全程正确。
-因此 0.1.18 起，health 只在"安静、WAL 为空、与写者互斥"时取样，并且**那条判词
-不再算判词**：它以 `database_check.complaint` 原文呈现，不参与 `status`。两个环境
-变量（均为 memoryd 进程级）：
-
-```text
-AGENT_MEMORY_HEALTH_SETTLE_MS=3000
-AGENT_MEMORY_HEALTH_CHECK_INTERVAL_MS=30000
-```
-
-| 变量 | 缺省 | 含义 |
+| 变量 | 缺省 | 作用 |
 | --- | --- | --- |
-| `AGENT_MEMORY_HEALTH_SETTLE_MS` | `3000` | 距最近一次写入（含后台批处理）不足这个时间就不取样，报 `busy`/`recent-activity`。`0` = 不等待（诊断用） |
-| `AGENT_MEMORY_HEALTH_CHECK_INTERVAL_MS` | `30000` | 上一次取样（含在案的投诉）被复用多久。`0` = 每次 `system.health` 都重新做一次独占检查（会更频繁地占用写锁） |
+| `BIANBU_AGENT_MEMORY_ENABLED` | `true` | Runtime 是否加载/调用外部 Memory 后端；关闭时 Runtime 不发起 SDK 请求 |
+| `AGENT_MEMORY_EMBEDDING_DISABLED` | 未设置 | 仅压制 Embedding 的“开箱默认”，不影响显式配置段落；供密闭测试和排障使用 |
+| `AGENT_MEMORY_HEALTH_SETTLE_MS` | `3000` | 距最近一次写入不足该时间就不做 health 取样；`0` 表示不等待 |
+| `AGENT_MEMORY_HEALTH_CHECK_INTERVAL_MS` | `30000` | 复用上一次 health 取样的时间窗口；`0` 表示每次重新检查 |
 
-响应字段：
-
-| 字段 | 取值 | 含义 |
-| --- | --- | --- |
-| `status` | `ok` / `degraded` / `unknown` | 只由最近一次**已发布**的判词推导；FTS5 那条判词、写者占库都不改变它 |
-| `database` | `ok` / 缺陷描述 / `busy` / `unknown` | 判词本体；`busy` = 本次没测到（写者占库或刚写过），`unknown` = 还没有取过样 |
-| `database_check.state` | `checked` / `cached` / `busy` / `complaint` | 本次判词的来源：刚取样 / 复用缓存 / 没测到 / 有在案的投诉 |
-| `database_check.reason` | `null` / `recent-activity` / `database-busy` / `fts5-inverted-index` | 为什么是现在这个 `state` |
-| `database_check.verdict` | `ok` / 缺陷描述 / `null` | 已发布的判词 |
-| `database_check.complaint` | `null` / 缺陷描述 | 不当作判词的投诉原文（目前只有 FTS5 inverted-index 那一类） |
-| `database_check.checked_at_ms` · `age_ms` · `interval_ms` · `attempts` | 数值 | 判词时间戳、年龄、缓存窗口、本次独占检查尝试次数 |
-| `embedding` | 对象 | 语义检索**当前生效**的配置：`enabled` / `base_url` / `model` / `dims`，以及 `config_file_matches`（磁盘上的 `memory.config.json` 是否已与本进程一致，见 §5）|
-
-`degraded` 只在"`quick_check` 报了不是 FTS5 inverted-index 的缺陷"时出现。监控规则
-请针对 `degraded` 触发，不要用 `status != "ok"`（`unknown` 是合法取值：可能是当前有
-写在并发、本次没测到，也可能是还没取过样）。若想观察那条瞬时判词而不告警，看
-`database_check.state == "complaint"` 与 `database_check.complaint`。细节与实测见
-`docs/GATEWAY_EMBEDDING_INTEGRATION.md` §8.2。
-
-`health.embedding` 存在的理由是“磁盘副本与生效值错位”：升级到 0.1.17 的设备上，文件里
-可能仍写着 0.1.16 的 `18801` endpoint，而服务已经在打 gateway。`config_file_matches`
-为 `false` 说明这一份文件还没被写回（多为只读目录或外部改过文件），排查时以
-`base_url`/`model` 为准。
-
-另一条排查入口是只读全库清册 —— 协议里每个方法只作用于调用者自己的 memory space，
-所以“某个退役测试空间里还剩什么”只能由守护进程自己回答：
-
-```bash
-sudo /usr/libexec/bianbu-agent-memoryd --report-namespaces \
-  --database /var/lib/bianbu-agent-memory/memory.db \
-  --key-package /var/lib/bianbu-agent-memory/memory.keypkg \
-  --account-secret-file /etc/bianbu-agent-memory/account-secret
-```
-
-输出每个 namespace 的逐表行数与正在使用的 `slot:` 标签（不含记忆正文）。它以
-`SQLITE_OPEN_READ_ONLY` 打开库，不迁移、不改写、不加写锁，因此可以在服务运行期间执行；
-覆盖脚本为 `scripts/k3_namespace_inventory.py`（清册 + 槽位合规）与
-`scripts/k3_memory_namespace_cleanup.py`（按同一判据收口），用法与现场结果见
-`docs/TEST_CASES.md` §4.3。
+health 各字段属于运行诊断输出，不是可写配置。

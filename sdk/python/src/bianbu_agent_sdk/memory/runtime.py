@@ -279,6 +279,40 @@ def _relative_activity(last_active_at: int, current: datetime) -> str:
 class MemoryBridge:
     """Best-effort Personal Agent lifecycle bridge to the local memory daemon."""
 
+    async def prepare_context(
+        self, *, query: str, session_id: str, config: dict | None = None
+    ) -> dict | None:
+        """Build bounded prompt context; the host only injects the result.
+
+        Identity belongs to this bridge, never to model-provided text/config.
+        This method performs reads only; summary compensation belongs to memoryd.
+        """
+        from .context import prepare_context
+
+        try:
+            return await asyncio.wait_for(
+                prepare_context(self, query=query, session_id=session_id, config=config),
+                timeout=(config or {}).get("timeout_seconds", self.timeout),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+    async def record_runtime_result(
+        self, *, run_id: str, session_id: str, agent_id: str,
+        user_text: str, assistant_text: str, status: str,
+        metadata: dict | None = None, config: dict | None = None,
+    ) -> bool:
+        """Record a host result; lifecycle flags must come from trusted host metadata."""
+        from .lifecycle import record_runtime_result
+
+        return await record_runtime_result(self, {
+            "run_id": run_id, "session_id": session_id, "agent_id": agent_id,
+            "request": user_text, "response": assistant_text, "status": status,
+            "metadata": metadata or {}, "config": config or {},
+        })
+
     def __init__(
         self,
         socket_path: str | None = None,
@@ -347,6 +381,7 @@ class MemoryBridge:
                     text=text,
                     revision=int(item.get("revision") or 1),
                     source="mem0-dplus",
+                    text_truncated=text != str(item.get("text") or ""),
                     score=score,
                     # mem0 answers similarities, so the same floor applies.
                     relevance=score,
@@ -410,11 +445,13 @@ class MemoryBridge:
         *,
         top_k: int = 5,
         max_chars: int = 6000,
+        include_explicit: bool = True,
     ) -> tuple[str, ...]:
         items = await self.recall_structured(
             query,
             top_k=top_k,
             max_chars=max_chars,
+            include_explicit=include_explicit,
         )
         return tuple(
             f"[{item.kind.value} rev={item.revision} source={item.source} "
@@ -530,8 +567,15 @@ class MemoryBridge:
                 if reminder_query
                 else []
             )
-            explicit_headers = await client.long_term.search_headers(
-                "", top_k=min(100, max(20, top_k * 4))
+            # Automatic prompt injection must not fill a query's empty result
+            # with unrelated profile records. Unordered/manual reads retain
+            # the canonical snapshot for backwards-compatible listing.
+            explicit_headers = (
+                await client.long_term.search_headers(
+                    "", top_k=min(100, max(20, top_k * 4))
+                )
+                if include_explicit or not query.strip()
+                else []
             )
             header_ids = list(
                 dict.fromkeys(
@@ -560,12 +604,9 @@ class MemoryBridge:
                 or "mem0-derived" in memory.tags
             ]
             if not include_explicit and query.strip():
-                query_terms = _query_terms(query)
-                explicit_records = [
-                    memory
-                    for memory in explicit_records
-                    if query_terms & _query_terms(memory.text)
-                ]
+                # Only backend query hits (with their real relevance) qualify.
+                # Token overlap on a snapshot is not a relevance judgement.
+                explicit_records = []
             by_id = {memory.memory_id: memory for memory in all_records}
             query_records = [
                 by_id[memory_id]
@@ -674,9 +715,10 @@ class MemoryBridge:
                     memory_id=memory.memory_id,
                     kind=memory.kind,
                     text=text,
+                    text_truncated=text != rendered,
                     revision=memory.revision,
                     source=memory.source,
-                    score=score_by_id.get(memory.memory_id, 1.0),
+                    score=score_by_id.get(memory.memory_id, 0.0),
                     relevance=relevance,
                     slot=slot,
                     tags=tuple(getattr(memory, "tags", ()) or ()),
@@ -722,6 +764,7 @@ class MemoryBridge:
                     memory_id=item.memory_id,
                     kind=item.kind,
                     text=clipped,
+                    text_truncated=item.text_truncated or clipped != item.text,
                     revision=item.revision,
                     source=item.source,
                     score=item.score,
@@ -1093,21 +1136,12 @@ class MemoryBridge:
         agent_id: str,
         user_text: str,
         assistant_text: str,
+        extraction_text: str | None = None,
+        force_summary: bool = False,
     ) -> bool:
         client = await self._client_or_none()
         if client is None:
             return False
-        settings: dict[str, object] = {}
-        try:
-            settings_method = getattr(client.privacy, "settings", None)
-            if settings_method is not None:
-                result = await settings_method()
-                if isinstance(result, dict):
-                    settings = result
-        except (OSError, ConnectionError, ServerUnavailable, MemoryError):
-            pass
-        summary_interval_turns = int(settings.get("summary_interval_turns") or 5)
-        recent_turn_limit = int(settings.get("recent_turn_limit") or 5)
         user_text = _clip(user_text, 64000)
         assistant_text = _clip(assistant_text, 64000)
         try:
@@ -1129,6 +1163,7 @@ class MemoryBridge:
                 event_type="assistant_message",
                 payload={
                     "role": "assistant",
+                    "session_end": force_summary,
                     "text": assistant_text,
                     "run_id": run_id,
                     "agent_id": agent_id,
@@ -1137,27 +1172,13 @@ class MemoryBridge:
                 sync_policy=SyncPolicy.LOCAL_ONLY,
                 idempotency_key=_key(run_id, "assistant-event"),
             )
-            await client.sessions.summarize(
-                session_id,
-                interval_turns=summary_interval_turns,
-                keep_raw_turns=recent_turn_limit,
-                idempotency_key=_key(run_id, "summary"),
-            )
             await client.runtime.prepare_checkpoint(
                 session_id,
                 idempotency_key=_key(run_id, "checkpoint"),
             )
-            try:
-                await client.privacy.run_maintenance(remove_expired=True)
-            except (OSError, ConnectionError, ServerUnavailable, MemoryError):
-                pass
-            try:
-                backup = getattr(client, "backup", None)
-                if backup is not None:
-                    await backup.run_scheduled()
-            except (OSError, ConnectionError, ServerUnavailable, MemoryError):
-                # Automatic backup is best-effort and must never block the Agent loop.
-                pass
+            # Keep original L2 events; only extraction uses the uncovered text.
+            if extraction_text is not None:
+                user_text = _clip(extraction_text, 64000)
             reminder = extract_reminder(user_text)
             if reminder is not None:
                 await client.long_term.put(
@@ -1180,7 +1201,7 @@ class MemoryBridge:
             contains_pii = _contains_pii(user_text)
             contains_profile_name = _contains_profile_name(user_text)
             contains_sensitive_data = contains_credential or contains_pii
-            if _dplus_enabled() and not contains_sensitive_data:
+            if _dplus_enabled() and not contains_sensitive_data and extraction_text is None:
                 try:
                     await client.projection.enqueue_turn(
                         provider="mem0-oss-v2",

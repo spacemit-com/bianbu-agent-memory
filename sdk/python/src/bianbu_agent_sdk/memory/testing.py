@@ -17,3 +17,4 @@ def development_confirm_token() -> str:
     if not token:
         raise RuntimeError("BIANBU_MEMORY_DEV_CONFIRM_TOKEN is not configured")
     return token
+

@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "harness_version": "0.1.0-rc.6",
+  "platform": "bianbu riscv64 K3",
+  "model_requests": 0,
+  "automated_checks": [
+    "turn_pairing",
+    "plugin_context_excluded",
+    "automatic_preference",
+    "cross_session_recall",
+    "untrusted_context",
+    "duplicate_turn",
+    "subagent_write_suppressed",
+    "explicit_save_tool",
+    "search_tool"
+  ],
+  "live_web_checks": [
+    "deepseek_harness_chat_completed",
+    "memory_context_injected",
+    "new_session_recalled_name_job_preference",
+    "model_called_memory_save_success_true",
+    "model_called_memory_search_found_saved_note"
+  ],
+  "live_result": "Memory was recalled, but the model correctly treated recalled content as untrusted and did not present it as verified identity.",
+  "scope": "isolated development memory stack; production registration, semantic embedding and API billing were not changed"
+}

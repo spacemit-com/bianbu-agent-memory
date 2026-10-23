@@ -106,6 +106,42 @@ def test_explicit_user_name_declarations_use_stable_slot(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     (
+        "以后叫我小元",
+        "之后叫我小圆",
+        "称呼我为太奶",
+        "希望被称呼为「太奶」",
+        "用户希望被称呼为「太奶」",
+    ),
+)
+def test_address_declarations_use_their_own_stable_slot(text: str) -> None:
+    """K3 2026-10-15, defect 7136281755: "称呼" used to be an alias of
+
+    ``profile.user_name``, so an address could only be stored by overwriting the
+    name, and a sentence that declared both owned neither slot and had to be kept
+    as unslotted prose.  An address now fills its own single-valued field, so a
+    rename and a re-address reach the field they belong to.
+    """
+
+    assert is_question_like(text) is False
+    assert preference_slot(text) == "profile.preferred_address"
+
+
+def test_a_sentence_that_declares_a_name_and_an_address_owns_neither_slot() -> None:
+    """One single-valued slot cannot hold two fields; extraction splits the sentence.
+
+    Both halves are declared in one message, so neither field may claim the whole
+    text -- that is exactly how the address ended up buried in a name record.
+    """
+
+    assert preference_slot("我的名字叫王源，以后叫我小元") is None
+    assert preference_slot(
+        "用户名字是 Dong，希望被称呼为「太奶」。"
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
         "我是从梧州来的",
         "我是做后端的",
         "我是说这个方案不行",
@@ -165,6 +201,14 @@ def test_slot_residual_reports_what_a_slot_replace_would_drop() -> None:
     assert slot_residual("\u6211\u662f\u767e\u5c81\u592a\u5976", "profile.user_name") is None
     # Only the slot about to be written is inspected.
     assert slot_residual(_SLOTTED_NAME_PLUS_PREFERENCE, "development.editor") is None
+
+
+def test_slot_residual_reports_what_an_address_replace_would_drop() -> None:
+    """The address field is single-valued too, so a replace keeps its residual."""
+
+    assert slot_residual("\u4ee5\u540e\u53eb\u6211\u5c0f\u5143\uff0c\u56de\u7b54\u8981\u7b80\u6d01", "profile.preferred_address") == "\u56de\u7b54\u8981\u7b80\u6d01"
+    # A clause that only asks to be addressed has nothing to preserve.
+    assert slot_residual("\u4ee5\u540e\u53eb\u6211\u5c0f\u5143", "profile.preferred_address") is None
 
 
 @pytest.mark.parametrize(

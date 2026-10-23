@@ -11,6 +11,7 @@ from bianbu_agent_sdk.memory.mem0 import (
     parse_mutations,
     infer_memory_kind,
 )
+from bianbu_agent_sdk.memory.ontology import preference_slot
 from bianbu_agent_sdk.memory.runtime import get_memory_bridge
 from bianbu_agent_sdk.memory.types import (
     LongTermMemory,
@@ -241,6 +242,69 @@ def test_rule_planner_keeps_a_style_preference_that_opens_with_a_polite_word() -
         ("我是小圆", MemoryKind.PROFILE),
         ("请用简洁清晰易懂的话来回答我的问题", MemoryKind.PREFERENCE),
     ]
+
+
+def test_rule_planner_splits_a_name_and_an_address_into_two_slots() -> None:
+    """K3 2026-10-15, defect 7136281755: "我的名字叫王源，以后叫我小元" was
+
+    kept as one unslotted sentence, so the name never reached
+    ``profile.user_name`` and the address never reached a field of its own; the
+    model kept answering from the stale fused record "用户名字是 Dong，希望被称呼为
+    「太奶」".  Each declaration now fills its own single-valued slot.
+    """
+
+    planner = RuleBasedMem0Planner()
+    candidates = asyncio.run(
+        planner.extract(
+            ({"role": "user", "content": "我的名字叫王源，以后叫我小元"},)
+        )
+    )
+
+    assert [(item.text, item.kind) for item in candidates] == [
+        ("我的名字叫王源", MemoryKind.PROFILE),
+        ("以后叫我小元", MemoryKind.PROFILE),
+    ]
+    assert preference_slot(candidates[0].text) == "profile.user_name"
+    assert preference_slot(candidates[1].text) == "profile.preferred_address"
+
+
+def test_rule_planner_keeps_an_address_and_the_text_it_cannot_hold() -> None:
+    """An address owns its slot; the rest of the sentence survives on its own."""
+
+    planner = RuleBasedMem0Planner()
+    candidates = asyncio.run(
+        planner.extract(
+            ({"role": "user", "content": "以后叫我小元，回答要简洁"},)
+        )
+    )
+
+    assert [(item.text, item.kind) for item in candidates] == [
+        ("以后叫我小元", MemoryKind.PROFILE),
+        ("回答要简洁", MemoryKind.PREFERENCE),
+    ]
+
+
+def test_rule_planner_updates_the_address_slot_instead_of_adding() -> None:
+    """A re-address revises the record that holds the address field."""
+
+    planner = RuleBasedMem0Planner()
+    existing = (
+        _memory("address", "以后叫我太奶", MemoryKind.PROFILE),
+    )
+
+    async def run():
+        extracted = await planner.extract(
+            ({"role": "user", "content": "以后叫我小元"},)
+        )
+        return extracted, await planner.merge(extracted, existing)
+
+    extracted, mutations = asyncio.run(run())
+
+    assert extracted == (
+        MemoryCandidate("以后叫我小元", MemoryKind.PROFILE, 0.65),
+    )
+    assert mutations[0].event is MutationEvent.UPDATE
+    assert mutations[0].memory_id == "address"
 
 
 def test_auto_extraction_cannot_replace_the_recorded_name() -> None:

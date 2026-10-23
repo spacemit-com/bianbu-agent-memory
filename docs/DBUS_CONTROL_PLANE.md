@@ -98,7 +98,7 @@ Call(s request_json) -> s response_json
 
 `Call` 是通用透传，方法集合与 UDS 完全一致（`docs/PROTOCOL.md` 的方法表：
 `system.*`、`account.status`、`instructions.*`、`sessions.*`、`long_term.*`、
-`privacy.*`、`projection.*`、`sync.*`、`backup.*`、`audit.*`、`runtime.*`）。
+`privacy.*`、`projection.*`、`sync.*`、`audit.*`、`runtime.*`）。
 未知方法返回 `NotFound: unknown protocol method`。
 
 ## 2. 身份与授权
@@ -230,7 +230,6 @@ python3 scripts/k3_dbus_acceptance.py --json /tmp/k3-dbus-acceptance.json
 | Account | GetStatus / BeginLogin / CompleteLogin / Logout | 系统设置、BiBit UI（按 2026-09-04「本版不提供账号登录」口径收敛为兼容入口） |
 | Policy | GetPolicy / SetMemoryEnabled / SetRetention / SetSyncPolicy | 受信策略服务 |
 | Sync | GetStatus / RequestSync / Pause / Resume | 系统设置、网络服务 |
-| Backup | Create / List / PreviewRestore / Restore / Cancel | 系统设置、BiBit UI |
 | Privacy | ClearConversation / ClearAll / ExportJson | 受信 UI |
 | Runtime | RegisterInstance / PrepareCheckpoint / RestoreCheckpoint / UnregisterInstance | Agent Runtime |
 | Audit | GetHealth / Flush | Agent OS Audit |

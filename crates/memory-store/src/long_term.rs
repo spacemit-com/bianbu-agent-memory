@@ -1039,7 +1039,7 @@ impl Store {
     }
 }
 
-fn memory_payload(
+pub(crate) fn memory_payload(
     memory_id: &str,
     kind: &str,
     text: &str,
@@ -1881,7 +1881,7 @@ fn query_lexical_backfill(
 /// the "memory" target (see `sdk/python/src/bianbu_agent_sdk/memory/ontology.py`).
 const DURABLE_TEXT_CHAR_LIMIT: usize = 2200;
 
-fn validate_memory_text(text: &str) -> ServiceResult<()> {
+pub(crate) fn validate_memory_text(text: &str) -> ServiceResult<()> {
     if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES {
         return Err(ServiceError::invalid("memory text is empty or too large"));
     }
@@ -1930,7 +1930,7 @@ fn validate_sensitivity(sensitivity: &str) -> ServiceResult<()> {
     }
 }
 
-fn looks_like_credential(text: &str) -> bool {
+pub(crate) fn looks_like_credential(text: &str) -> bool {
     let lowered = text.to_lowercase();
     [
         "password",
@@ -1951,7 +1951,7 @@ fn looks_like_credential(text: &str) -> bool {
     .any(|marker| lowered.contains(marker))
 }
 
-fn validate_tags(tags: &[String]) -> ServiceResult<()> {
+pub(crate) fn validate_tags(tags: &[String]) -> ServiceResult<()> {
     let slots = tags
         .iter()
         .filter_map(|tag| tag.strip_prefix("slot:"))

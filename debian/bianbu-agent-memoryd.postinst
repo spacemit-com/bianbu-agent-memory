@@ -63,17 +63,12 @@ if [ "$1" = configure ]; then
     # traverse this directory to reach models/. Sensitive files inside
     # (memory.keypkg, memory.db) keep their own 0600/0700 restrictions.
     install -d -o bianbu-memory -g bianbu-agent -m 0750 /var/lib/bianbu-agent-memory
-    # 0700 gives the owning group no access to capsules/ at all, so it does not
-    # have to be the platform group: use the package-owned group and keep the
-    # install independent of the platform account existing (build chroot).
-    install -d -o bianbu-memory -g bianbu-agent -m 0700 /var/lib/bianbu-agent-memory/capsules
     install -d -o root -g bianbu-agent -m 0750 /etc/bianbu-agent-memory
     umask 077
     create_secret /etc/bianbu-agent-memory/account-secret
-    create_secret /etc/bianbu-agent-memory/capsule-key
     create_secret /etc/bianbu-agent-memory/adapter-confirmation.secret
-    chown root:bianbu-agent /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/capsule-key /etc/bianbu-agent-memory/adapter-confirmation.secret
-    chmod 0640 /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/capsule-key /etc/bianbu-agent-memory/adapter-confirmation.secret
+    chown root:bianbu-agent /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/adapter-confirmation.secret
+    chmod 0640 /etc/bianbu-agent-memory/account-secret /etc/bianbu-agent-memory/adapter-confirmation.secret
     if [ ! -e /var/lib/bianbu-agent-memory/memory.keypkg ]; then
         /usr/libexec/bianbu-agent-memoryd \
             --runtime-registry-dir /run/bianbu/agent-runtime/memory-registry \

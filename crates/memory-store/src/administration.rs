@@ -1,14 +1,12 @@
-use crate::product::{
-    converged_backup_scopes, EmbeddingConfig, ProductConfigPatch, SummaryModelConfig, BACKUP_SCOPES,
-};
+use crate::product::{EmbeddingConfig, ProductConfigPatch, SummaryModelConfig};
 use crate::{
-    db_error, decode_json_payload, hash_bytes, hash_text, json_bytes, parse_params, ServiceResult,
-    Store,
+    db_error, decode_json_payload, encode_json_payload, hash_bytes, hash_text, json_bytes,
+    parse_params, ServiceResult, Store,
 };
 use memory_core::{now_ms, MemoryIdentity};
 use memory_protocol::{RequestEnvelope, ServiceError};
 use rusqlite::{params, OptionalExtension};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use uuid::Uuid;
@@ -38,11 +36,18 @@ struct UpdateSettings {
     retention_days: Option<i64>,
     #[serde(default)]
     audit_enabled: Option<bool>,
+    /// Retired cloud-backup settings (product change 2026-10-16). A client
+    /// built against 0.1.28 still sends these; accepting them keeps that
+    /// client's *other* setting changes working. The values are ignored and
+    /// never reach the config file, which is how the dead keys get dropped.
     #[serde(default)]
+    #[allow(dead_code)]
     backup_enabled: Option<bool>,
     #[serde(default)]
+    #[allow(dead_code)]
     backup_frequency: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     backup_scopes: Option<Vec<String>>,
     #[serde(default)]
     local_device_id: Option<String>,
@@ -70,7 +75,9 @@ struct UpdateSettings {
     /// manage them through the authenticated privacy settings path.
     #[serde(default)]
     max_database_bytes: Option<i64>,
+    /// Retired with cloud backup; accepted and ignored for the same reason.
     #[serde(default)]
+    #[allow(dead_code)]
     max_backup_bytes: Option<i64>,
     #[serde(default)]
     min_free_bytes: Option<i64>,
@@ -82,6 +89,74 @@ struct ExportData {
     limit_per_collection: i64,
     #[serde(default = "default_true")]
     include_audit: bool,
+    /// Opaque rowid watermark fixed by the first page. Re-echoing it on every
+    /// later page keeps rows inserted during the export out of the snapshot.
+    #[serde(default)]
+    snapshot_at: Option<i64>,
+    /// The three tables have independent rowid sequences, so one watermark
+    /// cannot bound all of them.  The daemon returns one per collection and
+    /// the client echoes it unchanged.
+    #[serde(default)]
+    snapshot: Option<ExportSnapshot>,
+    /// Per-collection keyset cursors for the next page. A collection missing
+    /// from this object has already been exhausted.
+    #[serde(default)]
+    cursor: Option<ExportCursor>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+struct ExportCursor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_events: Option<ExportPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_summaries: Option<ExportPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    long_term_memories: Option<ExportPosition>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+struct ExportSnapshot {
+    /// Compatibility scalar for older clients: the maximum of the three.
+    #[serde(default)]
+    snapshot_at: i64,
+    #[serde(default)]
+    session_events: i64,
+    #[serde(default)]
+    session_summaries: i64,
+    #[serde(default)]
+    long_term_memories: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+struct ExportPosition {
+    /// Sort timestamp of the last row on the page: created_at for events and
+    /// summaries, updated_at for L3.
+    at: i64,
+    /// Tiebreaker within the same millisecond.
+    rowid: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+struct ExportHasMore {
+    session_events: bool,
+    session_summaries: bool,
+    long_term_memories: bool,
+}
+
+struct ExportPage {
+    rows: Value,
+    next: Option<ExportPosition>,
+}
+
+/// Wire format of a full local export. Import accepts exactly this document so
+/// a file from another product (or a hand-edited blob) is not half-applied.
+const EXPORT_FORMAT: &str = "bianbu-agent-memory.export.v1";
+
+#[derive(Deserialize)]
+struct ImportData {
+    /// The whole `bianbu-agent-memory.export.v1` document, as returned by
+    /// `privacy.export_data`.
+    payload: Value,
 }
 
 #[derive(Deserialize)]
@@ -149,10 +224,9 @@ impl Store {
     pub(crate) fn get_privacy_settings(&self, identity: &MemoryIdentity) -> ServiceResult<Value> {
         let product = self.product_config()?;
         let connection = self.connection()?;
-        let row: Option<(i64, Option<i64>, i64, i64, String, String, i64)> = connection
+        let row: Option<(i64, Option<i64>, i64, i64)> = connection
             .query_row(
-                "SELECT memory_enabled,retention_days,audit_enabled,backup_enabled,
-                        backup_frequency,backup_scopes_json,updated_at
+                "SELECT memory_enabled,retention_days,audit_enabled,updated_at
                  FROM memory_settings
                  WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3",
                 params![
@@ -160,35 +234,14 @@ impl Store {
                     identity.agent_id,
                     identity.memory_space_id
                 ],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(db_error)?;
-        let (
-            memory_enabled,
-            retention_days,
-            audit_enabled,
-            backup_enabled,
-            backup_frequency,
-            backup_scopes_json,
-            updated_at,
-        ) = row.unwrap_or((
+        let (memory_enabled, retention_days, audit_enabled, updated_at) = row.unwrap_or((
             product.memory_enabled as i64,
             (product.retention_days != 0).then_some(product.retention_days),
             product.audit_enabled as i64,
-            product.cloud_backup_enabled as i64,
-            product.backup_frequency.clone(),
-            serde_json::to_string(&product.backup_scopes).unwrap_or_else(|_| "[]".to_owned()),
             0,
         ));
         let mut result = self.product_config_json(&identity.account_id, &identity.device_id)?;
@@ -201,16 +254,6 @@ impl Store {
             json!(retention_days.unwrap_or(0)),
         );
         object.insert("audit_enabled".to_owned(), json!(audit_enabled != 0));
-        object.insert("backup_enabled".to_owned(), json!(backup_enabled != 0));
-        object.insert("backup_frequency".to_owned(), json!(backup_frequency));
-        // Converge on read as well: rows written before 0.1.16 still carry the
-        // retired `summaries` scope, and the settings view must not offer it.
-        object.insert(
-            "backup_scopes".to_owned(),
-            json!(converged_backup_scopes(
-                &serde_json::from_str::<Vec<String>>(&backup_scopes_json).unwrap_or_default()
-            )),
-        );
         object.insert("updated_at".to_owned(), json!(updated_at));
         Ok(result)
     }
@@ -224,9 +267,6 @@ impl Store {
         if input.memory_enabled.is_none()
             && input.retention_days.is_none()
             && input.audit_enabled.is_none()
-            && input.backup_enabled.is_none()
-            && input.backup_frequency.is_none()
-            && input.backup_scopes.is_none()
             && input.local_device_id.is_none()
             && input.timezone.is_none()
             && input.sensitive_action_confirmation.is_none()
@@ -239,7 +279,6 @@ impl Store {
             && input.summary_model.is_none()
             && input.embedding.is_none()
             && input.max_database_bytes.is_none()
-            && input.max_backup_bytes.is_none()
             && input.min_free_bytes.is_none()
         {
             return Err(ServiceError::invalid("at least one setting is required"));
@@ -251,34 +290,6 @@ impl Store {
             return Err(ServiceError::invalid(
                 "retention_days must be 0, 7, 30, or 90; 0 means permanent",
             ));
-        }
-        if input
-            .backup_frequency
-            .as_deref()
-            .is_some_and(|value| !matches!(value, "manual" | "daily" | "weekly" | "monthly"))
-        {
-            return Err(ServiceError::invalid(
-                "backup_frequency must be manual, daily, weekly, or monthly",
-            ));
-        }
-        if input.backup_enabled == Some(true)
-            && (identity.account_id == "default" || identity.account_id.starts_with("local:"))
-        {
-            return Err(ServiceError::new(
-                "Unauthenticated",
-                "the local default account cannot enable cloud backup",
-            ));
-        }
-        if input.backup_enabled == Some(true)
-            && (self.backup_storage.is_none() || self.capsule_key.is_none())
-        {
-            return Err(ServiceError::new(
-                "BackupUnavailable",
-                "capsule key provider and backup storage adapter are not configured",
-            ));
-        }
-        if let Some(scopes) = input.backup_scopes.as_deref() {
-            validate_backup_scopes(scopes)?;
         }
         if let Some(cached) =
             self.cached_write_response(identity, request, "privacy.settings.update")?
@@ -292,9 +303,6 @@ impl Store {
             retention_days: input.retention_days,
             audit_enabled: input.audit_enabled,
             sensitive_action_confirmation: input.sensitive_action_confirmation.clone(),
-            cloud_backup_enabled: input.backup_enabled,
-            backup_frequency: input.backup_frequency.clone(),
-            backup_scopes: input.backup_scopes.clone(),
             preference_auto_apply_enabled: input.preference_auto_apply_enabled,
             development_habit_auto_apply_enabled: input.development_habit_auto_apply_enabled,
             recent_turn_limit: input.recent_turn_limit,
@@ -304,7 +312,6 @@ impl Store {
             summary_model: input.summary_model.clone(),
             embedding: input.embedding.clone(),
             max_database_bytes: input.max_database_bytes,
-            max_backup_bytes: input.max_backup_bytes,
             min_free_bytes: input.min_free_bytes,
         };
         if product_patch.is_empty() {
@@ -314,19 +321,16 @@ impl Store {
         let mut product_view =
             self.product_config_json(&identity.account_id, &identity.device_id)?;
         self.with_write(identity, request, "privacy.settings.update", "settings", move |tx, _, now, _, _| {
-            let current: Option<(i64, Option<i64>, i64, i64, String, String)> = tx.query_row(
-                "SELECT memory_enabled,retention_days,audit_enabled,backup_enabled,backup_frequency,backup_scopes_json FROM memory_settings
+            let current: Option<(i64, Option<i64>, i64)> = tx.query_row(
+                "SELECT memory_enabled,retention_days,audit_enabled FROM memory_settings
                  WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3",
                 params![identity.account_id,identity.agent_id,identity.memory_space_id],
-                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
             ).optional().map_err(db_error)?;
-            let (old_memory, old_retention, old_audit, old_backup, old_frequency, old_scopes) = current.unwrap_or((
+            let (old_memory, old_retention, old_audit) = current.unwrap_or((
                 product.memory_enabled as i64,
                 (product.retention_days != 0).then_some(product.retention_days),
                 product.audit_enabled as i64,
-                product.cloud_backup_enabled as i64,
-                product.backup_frequency.clone(),
-                serde_json::to_string(&product.backup_scopes).unwrap_or_else(|_| "[]".to_owned()),
             ));
             let memory_enabled = input.memory_enabled.map(|value| value as i64).unwrap_or(old_memory);
             let retention_days = match input.retention_days {
@@ -335,29 +339,13 @@ impl Store {
                 None => old_retention,
             };
             let audit_enabled = input.audit_enabled.map(|value| value as i64).unwrap_or(old_audit);
-            let backup_enabled = input.backup_enabled.map(|value| value as i64).unwrap_or(old_backup);
-            let backup_frequency = input.backup_frequency.clone().unwrap_or(old_frequency);
-            // A settings write always converges the persisted list, so a device
-            // that still holds the retired `summaries` scope is cleaned up on the
-            // first unrelated setting change (or on any explicit scope update).
-            let backup_scopes_json = match input.backup_scopes.as_ref() {
-                Some(value) => {
-                    serde_json::to_string(value).unwrap_or_else(|_| "[]".to_owned())
-                }
-                None => serde_json::to_string(&converged_backup_scopes(
-                    &serde_json::from_str::<Vec<String>>(&old_scopes).unwrap_or_default(),
-                ))
-                .unwrap_or_else(|_| "[]".to_owned()),
-            };
             tx.execute(
-                "INSERT INTO memory_settings(account_id,agent_id,memory_space_id,memory_enabled,retention_days,audit_enabled,backup_enabled,backup_frequency,backup_scopes_json,updated_at)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+                "INSERT INTO memory_settings(account_id,agent_id,memory_space_id,memory_enabled,retention_days,audit_enabled,updated_at)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7)
                  ON CONFLICT(account_id,agent_id,memory_space_id) DO UPDATE SET
                    memory_enabled=excluded.memory_enabled,retention_days=excluded.retention_days,
-                   audit_enabled=excluded.audit_enabled,backup_enabled=excluded.backup_enabled,
-                   backup_frequency=excluded.backup_frequency,backup_scopes_json=excluded.backup_scopes_json,
-                   updated_at=excluded.updated_at",
-                params![identity.account_id,identity.agent_id,identity.memory_space_id,memory_enabled,retention_days,audit_enabled,backup_enabled,backup_frequency,backup_scopes_json,now],
+                   audit_enabled=excluded.audit_enabled,updated_at=excluded.updated_at",
+                params![identity.account_id,identity.agent_id,identity.memory_space_id,memory_enabled,retention_days,audit_enabled,now],
             ).map_err(db_error)?;
             // MEM-PRD retention: tightening the window is retroactive. Rows
             // stored under a wider setting (or permanent) are capped at
@@ -401,12 +389,6 @@ impl Store {
             object.insert("memory_enabled".to_owned(), json!(memory_enabled != 0));
             object.insert("retention_days".to_owned(), json!(retention_days.unwrap_or(0)));
             object.insert("audit_enabled".to_owned(), json!(audit_enabled != 0));
-            object.insert("backup_enabled".to_owned(), json!(backup_enabled != 0));
-            object.insert("backup_frequency".to_owned(), json!(backup_frequency));
-            object.insert(
-                "backup_scopes".to_owned(),
-                serde_json::from_str::<Value>(&backup_scopes_json).unwrap_or_else(|_| json!([])),
-            );
             object.insert("updated_at".to_owned(), json!(now));
             object.insert("retention_restamped".to_owned(), json!(restamped));
             Ok((product_view,Some(identity.memory_space_id.clone())))
@@ -539,25 +521,70 @@ impl Store {
         }
         let connection = self.connection()?;
         let settings = self.get_privacy_settings(identity)?;
-        let session_events =
-            collect_session_event_rows(&connection, identity, input.limit_per_collection)?;
-        let summaries = collect_json_rows(
+        let snapshot = match (input.snapshot, input.snapshot_at) {
+            (Some(snapshot), _) => snapshot,
+            // Older SDKs only know the scalar. Repeating it per collection is
+            // the safest interpretation and keeps their paging monotonic.
+            (None, Some(legacy)) => ExportSnapshot {
+                snapshot_at: legacy,
+                session_events: legacy,
+                session_summaries: legacy,
+                long_term_memories: legacy,
+            },
+            (None, None) => ExportSnapshot {
+                snapshot_at: 0,
+                session_events: max_rowid(&connection, "session_events", identity),
+                session_summaries: max_rowid(&connection, "session_summaries", identity),
+                long_term_memories: max_rowid(&connection, "long_term_memories", identity),
+            },
+        };
+        let snapshot_at = snapshot
+            .session_events
+            .max(snapshot.session_summaries)
+            .max(snapshot.long_term_memories);
+        // Keep the compatibility scalar self-consistent on the first page too:
+        // a caller may echo `snapshot` verbatim without patching this field.
+        let snapshot = ExportSnapshot {
+            snapshot_at,
+            ..snapshot
+        };
+        let cursor = input.cursor.unwrap_or_default();
+        let event_page = collect_session_event_page(
             &connection,
-            "SELECT json_object('session_id',session_id,'revision',revision,'summary',json(summary_payload),
-                    'source_event_sequence',source_event_sequence,'producer',producer,'created_at',created_at)
-             FROM session_summaries WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND is_current=1
-             ORDER BY created_at DESC LIMIT ?4",
             identity,
+            snapshot.session_events,
+            cursor.session_events,
             input.limit_per_collection,
         )?;
-        let memories = collect_json_rows(
+        let summary_page = collect_export_page(
+            &connection,
+            "SELECT json_object('session_id',session_id,'revision',revision,'summary',json(summary_payload),
+                    'source_event_sequence',source_event_sequence,'producer',producer,'created_at',created_at),
+                    created_at,rowid
+             FROM session_summaries
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND is_current=1
+               AND rowid<=?4
+               AND (?5 IS NULL OR created_at<?5 OR (created_at=?5 AND rowid<?6))
+             ORDER BY created_at DESC,rowid DESC LIMIT ?7",
+            identity,
+            snapshot.session_summaries,
+            cursor.session_summaries,
+            input.limit_per_collection,
+        )?;
+        let memory_page = collect_export_page(
             &connection,
             "SELECT json_object('memory_id',memory_id,'kind',kind,'text',content,'summary',summary,
                     'tags',json(tags_json),'source',source,'sensitivity',sensitivity,
-                    'revision',current_revision,'created_at',created_at,'updated_at',updated_at)
-             FROM long_term_memories WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3
-             ORDER BY updated_at DESC LIMIT ?4",
+                    'revision',current_revision,'created_at',created_at,'updated_at',updated_at),
+                    updated_at,rowid
+             FROM long_term_memories
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3
+               AND rowid<=?4
+               AND (?5 IS NULL OR updated_at<?5 OR (updated_at=?5 AND rowid<?6))
+             ORDER BY updated_at DESC,rowid DESC LIMIT ?7",
             identity,
+            snapshot.long_term_memories,
+            cursor.long_term_memories,
             input.limit_per_collection,
         )?;
         let audit = if input.include_audit {
@@ -569,17 +596,139 @@ impl Store {
         } else {
             json!([])
         };
+        let has_more = ExportHasMore {
+            session_events: event_page.next.is_some(),
+            session_summaries: summary_page.next.is_some(),
+            long_term_memories: memory_page.next.is_some(),
+        };
+        let next_cursor = ExportCursor {
+            session_events: event_page.next,
+            session_summaries: summary_page.next,
+            long_term_memories: memory_page.next,
+        };
         Ok(json!({
-            "format":"bianbu-agent-memory.export.v1",
+            "format":EXPORT_FORMAT,
             "exported_at":now_ms(),
             "scope":{"account_id":identity.account_id,"agent_id":identity.agent_id,"memory_space_id":identity.memory_space_id},
             "settings":settings,
-            "session_events":session_events,
-            "session_summaries":summaries,
-            "long_term_memories":memories,
+            "session_events":event_page.rows,
+            "session_summaries":summary_page.rows,
+            "long_term_memories":memory_page.rows,
             "audit":audit,
-            "limit_per_collection":input.limit_per_collection
+            "limit_per_collection":input.limit_per_collection,
+            "snapshot_at":snapshot_at,
+            "snapshot":snapshot,
+            "has_more":has_more,
+            "has_more_any":has_more.session_events || has_more.session_summaries || has_more.long_term_memories,
+            "next_cursor":next_cursor
         }))
+    }
+
+    /// Restore a `privacy.export_data` document into the caller's namespace.
+    ///
+    /// The import is a merge, never a replace: rows are keyed by their original
+    /// id (`event_id` / `session_id` + revision / `memory_id`), an existing row
+    /// is left untouched, and only records inside the caller's own namespace
+    /// are considered. Re-importing the same file therefore reports every
+    /// record as skipped instead of duplicating it, and a record the user has
+    /// since edited or deleted stays as it is: an import must not silently undo
+    /// a later correction.
+    ///
+    /// Only L1 events, L2 summaries, and L3 memories are restored. Settings and
+    /// audit records are not imported, and a record the export could not read
+    /// (legacy event encoding) is counted as skipped rather than guessed at.
+    ///
+    /// Restored rows are written with `sync_policy=local_only`: an import is a
+    /// local restore, so it must not enqueue an upload of the restored data.
+    pub(crate) fn import_data(
+        &self,
+        identity: &MemoryIdentity,
+        request: &RequestEnvelope,
+    ) -> ServiceResult<Value> {
+        let input: ImportData = parse_params(request)?;
+        let document = input
+            .payload
+            .as_object()
+            .ok_or_else(|| ServiceError::invalid("import payload must be an object"))?;
+        if document.get("format").and_then(Value::as_str) != Some(EXPORT_FORMAT) {
+            return Err(ServiceError::invalid(format!(
+                "import payload must use format {EXPORT_FORMAT}"
+            )));
+        }
+        // Rows land in this namespace only. A document carrying a different
+        // scope is refused outright instead of being silently displaced into
+        // this space: that would mix one agent's memory into another's.
+        if let Some(scope) = document.get("scope").and_then(Value::as_object) {
+            for (key, expected) in [
+                ("account_id", identity.account_id.as_str()),
+                ("agent_id", identity.agent_id.as_str()),
+                ("memory_space_id", identity.memory_space_id.as_str()),
+            ] {
+                if scope
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|provided| provided != expected)
+                {
+                    return Err(ServiceError::invalid(format!(
+                        "import payload belongs to a different {key}"
+                    )));
+                }
+            }
+        }
+        let events = import_array(document, "session_events")?;
+        let summaries = import_array(document, "session_summaries")?;
+        let memories = import_array(document, "long_term_memories")?;
+        let summary_retention_days = self.product_config()?.summary_retention_days;
+        // Collected inside the transaction, embedded after it commits: the
+        // vector is derived data and the background job is the retry path.
+        let mut imported_memory_ids = Vec::new();
+        let result = self.with_write(
+            identity,
+            request,
+            "privacy.import_data",
+            "import",
+            |tx, hlc, now, _, _| {
+                let mut imported = ImportCounts::default();
+                let mut skipped = ImportCounts::default();
+                for event in &events {
+                    match import_event(tx, identity, event, hlc, now) {
+                        Ok(true) => imported.session_events += 1,
+                        Ok(_) => skipped.session_events += 1,
+                        Err(_) => skipped.session_events += 1,
+                    }
+                }
+                for summary in &summaries {
+                    match import_summary(tx, identity, summary, hlc, now, summary_retention_days) {
+                        Ok(true) => imported.session_summaries += 1,
+                        Ok(_) => skipped.session_summaries += 1,
+                        Err(_) => skipped.session_summaries += 1,
+                    }
+                }
+                for memory in &memories {
+                    match import_memory(tx, identity, memory, hlc, now) {
+                        Ok(Some(memory_id)) => {
+                            imported.long_term_memories += 1;
+                            imported_memory_ids.push(memory_id);
+                        }
+                        Ok(None) => skipped.long_term_memories += 1,
+                        Err(_) => skipped.long_term_memories += 1,
+                    }
+                }
+                Ok((
+                    json!({
+                        "imported_at":now,
+                        "format":EXPORT_FORMAT,
+                        "imported":imported,
+                        "skipped":skipped,
+                    }),
+                    Some(identity.memory_space_id.clone()),
+                ))
+            },
+        )?;
+        for memory_id in &imported_memory_ids {
+            crate::embedding::index_memory_after_commit(self, identity, memory_id);
+        }
+        Ok(result)
     }
 
     pub(crate) fn clear_history(
@@ -793,18 +942,6 @@ impl Store {
     }
 }
 
-fn validate_backup_scopes(scopes: &[String]) -> ServiceResult<()> {
-    if scopes.is_empty()
-        || scopes.len() > BACKUP_SCOPES.len()
-        || scopes
-            .iter()
-            .any(|scope| !BACKUP_SCOPES.contains(&scope.as_str()))
-    {
-        Err(ServiceError::invalid("invalid backup scopes"))
-    } else {
-        Ok(())
-    }
-}
 
 fn lifecycle_archive_text(summary: &Value) -> String {
     let mut sections = Vec::new();
@@ -890,6 +1027,364 @@ fn summarize_sequence_list(sequences: &[i64]) -> String {
     format!("{}-{}", sequences[0], sequences[sequences.len() - 1])
 }
 
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct ImportCounts {
+    session_events: u64,
+    session_summaries: u64,
+    long_term_memories: u64,
+}
+
+fn import_array(document: &serde_json::Map<String, Value>, key: &str) -> ServiceResult<Vec<Value>> {
+    match document.get(key) {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => Ok(items.clone()),
+        Some(_) => Err(ServiceError::invalid(format!("{key} must be an array"))),
+    }
+}
+
+fn import_timestamp(value: &Value, fallback: i64) -> i64 {
+    value.as_i64().filter(|stamp| *stamp > 0).unwrap_or(fallback)
+}
+
+/// Insert one L1 event. `Ok(false)` means it was skipped, not that it failed:
+/// a duplicate id, or a field the store would refuse (unknown event type,
+/// oversized payload), is left out instead of aborting the whole import.
+fn import_event(
+    tx: &rusqlite::Transaction<'_>,
+    identity: &MemoryIdentity,
+    value: &Value,
+    hlc: &str,
+    now: i64,
+) -> ServiceResult<bool> {
+    let event_id = value
+        .get("event_id")
+        .and_then(Value::as_str)
+        .filter(|value| memory_core::valid_identifier(value))
+        .ok_or_else(|| ServiceError::invalid("invalid event_id"))?;
+    let session_id = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ServiceError::invalid("invalid session_id"))?;
+    super::sessions::validate_session_id(session_id)?;
+    let event_type = value
+        .get("event_type")
+        .and_then(Value::as_str)
+        .filter(|value| memory_core::allowed_event_type(value))
+        .ok_or_else(|| ServiceError::invalid("invalid event_type"))?;
+    let payload = value
+        .get("payload")
+        .ok_or_else(|| ServiceError::invalid("event payload is missing"))?;
+    let logical = json_bytes(payload)?;
+    if logical.len() > memory_core::MAX_TEXT_BYTES {
+        return Err(ServiceError::invalid("event payload is too large"));
+    }
+    let exists: bool = tx
+        .query_row(
+            "SELECT 1 FROM session_events WHERE event_id=?1",
+            [event_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(db_error)?
+        .is_some();
+    if exists {
+        return Ok(false);
+    }
+    // Keep the exported sequence when it is still free in this namespace;
+    // otherwise append after the newest event so the UNIQUE key holds.
+    let requested = value
+        .get("event_sequence")
+        .and_then(Value::as_i64)
+        .filter(|sequence| *sequence > 0);
+    let sequence: i64 = match requested {
+        Some(sequence)
+            if !tx
+                .query_row(
+                    "SELECT 1 FROM session_events
+                     WHERE account_id=?1 AND agent_id=?2 AND session_id=?3 AND event_sequence=?4",
+                    params![
+                        identity.account_id,
+                        identity.agent_id,
+                        session_id,
+                        sequence
+                    ],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(db_error)?
+                .is_some() =>
+        {
+            sequence
+        }
+        _ => tx
+            .query_row(
+                "SELECT COALESCE(MAX(event_sequence),0)+1 FROM session_events
+                 WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND session_id=?4",
+                params![
+                    identity.account_id,
+                    identity.agent_id,
+                    identity.memory_space_id,
+                    session_id
+                ],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?,
+    };
+    let (payload_blob, payload_encoding) = encode_json_payload(payload)?;
+    tx.execute(
+        "INSERT INTO session_events(
+            event_id,account_id,agent_id,memory_space_id,session_id,event_sequence,event_type,
+            payload,payload_encoding,payload_hash,sync_policy,expires_at,created_at,hlc
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'local_only',?11,?12,?13)",
+        params![
+            event_id,
+            identity.account_id,
+            identity.agent_id,
+            identity.memory_space_id,
+            session_id,
+            sequence,
+            event_type,
+            payload_blob,
+            payload_encoding,
+            hash_bytes(&logical),
+            value.get("expires_at").and_then(Value::as_i64),
+            import_timestamp(value.get("created_at").unwrap_or(&Value::Null), now),
+            hlc
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(true)
+}
+
+/// Insert one L2 summary. A session that already has a current summary keeps
+/// it: summaries are derived, so replacing one would rewrite history the user
+/// or the summariser has moved past.
+fn import_summary(
+    tx: &rusqlite::Transaction<'_>,
+    identity: &MemoryIdentity,
+    value: &Value,
+    hlc: &str,
+    now: i64,
+    retention_days: i64,
+) -> ServiceResult<bool> {
+    let session_id = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ServiceError::invalid("invalid session_id"))?;
+    super::sessions::validate_session_id(session_id)?;
+    let summary = value
+        .get("summary")
+        .ok_or_else(|| ServiceError::invalid("summary is missing"))?;
+    super::sessions::validate_summary_patch(summary)?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT 1 FROM session_summaries
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND session_id=?4",
+            params![
+                identity.account_id,
+                identity.agent_id,
+                identity.memory_space_id,
+                session_id
+            ],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(db_error)?
+        .is_some();
+    if exists {
+        return Ok(false);
+    }
+    let source_event_sequence = value
+        .get("source_event_sequence")
+        .and_then(Value::as_i64)
+        .filter(|sequence| *sequence >= 0)
+        .unwrap_or(0);
+    let max_sequence: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(event_sequence),0) FROM session_events
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3 AND session_id=?4",
+            params![
+                identity.account_id,
+                identity.agent_id,
+                identity.memory_space_id,
+                session_id
+            ],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
+    // A summary may not point past the newest event of its session; when the
+    // export dropped events (or the event import skipped them) the pointer is
+    // clamped so the row stays consistent with what actually exists.
+    let source_event_sequence = source_event_sequence.min(max_sequence);
+    let created_at = import_timestamp(value.get("created_at").unwrap_or(&Value::Null), now);
+    let blob = json_bytes(summary)?;
+    if blob.len() > memory_core::MAX_TEXT_BYTES {
+        return Err(ServiceError::invalid("summary is too large"));
+    }
+    tx.execute(
+        "INSERT INTO session_summaries(
+            session_id,account_id,agent_id,memory_space_id,revision,parent_revision,
+            summary_payload,source_event_sequence,sync_policy,producer,model_ref,
+            policy_version,created_at,hlc,is_current,expires_at
+         ) VALUES(?1,?2,?3,?4,1,NULL,?5,?6,'local_only',?7,NULL,1,?8,?9,1,?10)",
+        params![
+            session_id,
+            identity.account_id,
+            identity.agent_id,
+            identity.memory_space_id,
+            blob,
+            source_event_sequence,
+            value
+                .get("producer")
+                .and_then(Value::as_str)
+                .unwrap_or("agent"),
+            created_at,
+            hlc,
+            created_at.saturating_add(retention_days.saturating_mul(24 * 60 * 60 * 1000))
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(true)
+}
+
+/// Insert one L3 memory and its first revision. Returns the new id so the
+/// caller can rebuild the semantic vector after commit; `Ok(None)` means the
+/// record was skipped because it already exists.
+fn import_memory(
+    tx: &rusqlite::Transaction<'_>,
+    identity: &MemoryIdentity,
+    value: &Value,
+    hlc: &str,
+    now: i64,
+) -> ServiceResult<Option<String>> {
+    let memory_id = value
+        .get("memory_id")
+        .and_then(Value::as_str)
+        .filter(|value| memory_core::valid_identifier(value))
+        .ok_or_else(|| ServiceError::invalid("invalid memory_id"))?;
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|value| memory_core::allowed_memory_kind(value))
+        .ok_or_else(|| ServiceError::invalid("invalid memory kind"))?;
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ServiceError::invalid("memory text is missing"))?;
+    super::long_term::validate_memory_text(text)?;
+    let summary = value.get("summary").and_then(Value::as_str);
+    let tags = value
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    super::long_term::validate_tags(&tags)?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT 1 FROM long_term_memories WHERE memory_id=?1",
+            [memory_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(db_error)?
+        .is_some();
+    if exists {
+        return Ok(None);
+    }
+    // Re-apply the same sensitivity rules as a normal write: a credential-like
+    // body never lands as plaintext-indexable, and a profile row is never
+    // downgraded below `sensitive`.
+    let mut sensitivity = match value.get("sensitivity").and_then(Value::as_str) {
+        Some(value @ ("public" | "private" | "sensitive" | "secret")) => value,
+        _ => "private",
+    };
+    if super::long_term::looks_like_credential(text) {
+        sensitivity = "secret";
+    }
+    if kind == "profile" && matches!(sensitivity, "public" | "private") {
+        sensitivity = "sensitive";
+    }
+    let source = value
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= 64)
+        .unwrap_or("agent");
+    let created_at = import_timestamp(value.get("created_at").unwrap_or(&Value::Null), now);
+    let updated_at = import_timestamp(value.get("updated_at").unwrap_or(&Value::Null), created_at);
+    let tags_json = serde_json::to_string(&tags)
+        .map_err(|_| ServiceError::invalid("invalid tags"))?;
+    let payload = super::long_term::memory_payload(
+        memory_id,
+        kind,
+        text,
+        summary,
+        &tags,
+        source,
+        None,
+        sensitivity,
+        1,
+        "local_only",
+        None,
+        &[],
+    );
+    let blob = json_bytes(&payload)?;
+    let payload_hash = hash_bytes(&blob);
+    tx.execute(
+        "INSERT INTO long_term_memories(
+            memory_id,account_id,agent_id,memory_space_id,kind,content,summary,tags_json,
+            source,confidence,sensitivity,current_revision,sync_policy,expires_at,
+            created_at,updated_at,hlc
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10,1,'local_only',NULL,?11,?12,?13)",
+        params![
+            memory_id,
+            identity.account_id,
+            identity.agent_id,
+            identity.memory_space_id,
+            kind,
+            text,
+            summary,
+            tags_json,
+            source,
+            sensitivity,
+            created_at,
+            updated_at,
+            hlc
+        ],
+    )
+    .map_err(db_error)?;
+    tx.execute(
+        "INSERT INTO memory_revisions(
+            memory_id,revision,parent_revision,payload,payload_hash,author_device_id,
+            author_agent_id,created_at,hlc
+         ) VALUES(?1,1,NULL,?2,?3,?4,?5,?6,?7)",
+        params![
+            memory_id,
+            blob,
+            payload_hash,
+            identity.device_id,
+            identity.agent_id,
+            created_at,
+            hlc
+        ],
+    )
+    .map_err(db_error)?;
+    super::long_term::index_memory(
+        tx,
+        memory_id,
+        text,
+        summary,
+        &tags_json,
+        sensitivity,
+    )?;
+    Ok(Some(memory_id.to_owned()))
+}
+
 fn validate_confirmed_operation(input: &ConfirmedOperation) -> ServiceResult<()> {
     if !input
         .confirm_token
@@ -904,73 +1399,143 @@ fn validate_confirmed_operation(input: &ConfirmedOperation) -> ServiceResult<()>
     Ok(())
 }
 
-fn collect_json_rows(
+fn collect_export_page(
     connection: &rusqlite::Connection,
     sql: &str,
     identity: &MemoryIdentity,
+    snapshot_at: i64,
+    cursor: Option<ExportPosition>,
     limit: i64,
-) -> ServiceResult<Value> {
+) -> ServiceResult<ExportPage> {
     let mut statement = connection.prepare(sql).map_err(db_error)?;
+    // Ask for one extra row so `has_more` is answered without a COUNT scan.
+    let query_limit = limit.saturating_add(1);
     let rows = statement
         .query_map(
             params![
                 identity.account_id,
                 identity.agent_id,
                 identity.memory_space_id,
-                limit
+                snapshot_at,
+                cursor.map(|position| position.at),
+                cursor.map(|position| position.rowid).unwrap_or(i64::MAX),
+                query_limit
             ],
             |row| {
                 let encoded: String = row.get(0)?;
-                Ok(serde_json::from_str::<Value>(&encoded).unwrap_or(Value::Null))
+                Ok((
+                    serde_json::from_str::<Value>(&encoded).unwrap_or(Value::Null),
+                    ExportPosition {
+                        at: row.get(1)?,
+                        rowid: row.get(2)?,
+                    },
+                ))
             },
         )
         .map_err(db_error)?;
-    Ok(Value::Array(
-        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?,
-    ))
+    let mut rows = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    let next = if rows.len() as i64 > limit {
+        rows.truncate(limit as usize);
+        rows.last().map(|(_, position)| *position)
+    } else {
+        None
+    };
+    Ok(ExportPage {
+        rows: Value::Array(rows.into_iter().map(|(value, _)| value).collect()),
+        next,
+    })
 }
 
-fn collect_session_event_rows(
+fn max_rowid(
+    connection: &rusqlite::Connection,
+    table: &str,
+    identity: &MemoryIdentity,
+) -> i64 {
+    // Table names are internal constants selected by the caller, never input.
+    connection
+        .query_row(
+            &format!(
+                "SELECT COALESCE(MAX(rowid),0) FROM {table}
+                 WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3"
+            ),
+            params![
+                identity.account_id,
+                identity.agent_id,
+                identity.memory_space_id
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+}
+
+fn collect_session_event_page(
     connection: &rusqlite::Connection,
     identity: &MemoryIdentity,
+    snapshot_at: i64,
+    cursor: Option<ExportPosition>,
     limit: i64,
-) -> ServiceResult<Value> {
+) -> ServiceResult<ExportPage> {
     let mut statement = connection
         .prepare(
             "SELECT event_id,session_id,event_sequence,event_type,payload,payload_encoding,
-                    created_at,expires_at
-             FROM session_events WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3
-             ORDER BY created_at DESC LIMIT ?4",
+                    created_at,expires_at,rowid
+             FROM session_events
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3
+               AND rowid<=?4
+               AND (?5 IS NULL OR created_at<?5 OR (created_at=?5 AND rowid<?6))
+             ORDER BY created_at DESC,rowid DESC LIMIT ?7",
         )
         .map_err(db_error)?;
+    let query_limit = limit.saturating_add(1);
     let rows = statement
         .query_map(
             params![
                 identity.account_id,
                 identity.agent_id,
                 identity.memory_space_id,
-                limit
+                snapshot_at,
+                cursor.map(|position| position.at),
+                cursor.map(|position| position.rowid).unwrap_or(i64::MAX),
+                query_limit
             ],
             |row| {
                 let blob: Vec<u8> = row.get(4)?;
                 let encoding: String = row.get(5)?;
                 let payload = decode_json_payload(&blob, &encoding)
                     .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-                Ok(json!({
-                    "event_id":row.get::<_,String>(0)?,
-                    "session_id":row.get::<_,String>(1)?,
-                    "event_sequence":row.get::<_,i64>(2)?,
-                    "event_type":row.get::<_,String>(3)?,
-                    "payload":payload,
-                    "created_at":row.get::<_,i64>(6)?,
-                    "expires_at":row.get::<_,Option<i64>>(7)?
-                }))
+                Ok((
+                    json!({
+                        "event_id":row.get::<_,String>(0)?,
+                        "session_id":row.get::<_,String>(1)?,
+                        "event_sequence":row.get::<_,i64>(2)?,
+                        "event_type":row.get::<_,String>(3)?,
+                        "payload":payload,
+                        "created_at":row.get::<_,i64>(6)?,
+                        "expires_at":row.get::<_,Option<i64>>(7)?
+                    }),
+                    ExportPosition {
+                        at: row.get(6)?,
+                        rowid: row.get(8)?,
+                    },
+                ))
             },
         )
         .map_err(db_error)?;
-    Ok(Value::Array(
-        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?,
-    ))
+    let mut rows = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    let next = if rows.len() as i64 > limit {
+        rows.truncate(limit as usize);
+        rows.last().map(|(_, position)| *position)
+    } else {
+        None
+    };
+    Ok(ExportPage {
+        rows: Value::Array(rows.into_iter().map(|(value, _)| value).collect()),
+        next,
+    })
 }
 
 fn scoped_memory_ids(

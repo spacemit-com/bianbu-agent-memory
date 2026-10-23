@@ -55,7 +55,8 @@ def main() -> int:
             with os.fdopen(os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
                 output.write(secrets.token_hex(32) + "\n")
         socket = state / "memoryd.sock"
-        env = dict(os.environ, HERMES_HOME=str(home), BIANBU_AGENT_MEMORY_SOCKET=str(socket))
+        env = dict(os.environ, HERMES_HOME=str(home), BIANBU_AGENT_MEMORY_SOCKET=str(socket),
+                   BIANBU_MEMORY_DEV_CONFIRM_TOKEN=secrets.token_urlsafe(32))
         env['PYTHONPATH'] = str(args.sdk_path) + os.pathsep + env.get('PYTHONPATH', '')
         # Integration stack uses lexical recall; don't touch gateway/NPU instances.
         daemon_env = dict(env, AGENT_MEMORY_EMBEDDING_DISABLED="1")

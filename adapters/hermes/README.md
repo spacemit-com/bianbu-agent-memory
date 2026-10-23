@@ -155,3 +155,47 @@ Verify the saved preference in backend records as well as the reply; an LLM's
 "saved" statement alone does not prove persistence. Automated acceptance uses
 temporary data and makes zero model requests; it does not verify API billing,
 provider credentials, semantic embeddings or production Runtime registration.
+
+
+## Canonical tools and confirmation
+
+The provider exposes `bianbu_memory_search`, `bianbu_memory_save`,
+`bianbu_memory_update`, and `bianbu_memory_remove`. Search preserves backend
+failure status and returns record IDs and revisions. Updates require the expected
+revision. Successful explicit writes subtract only literally covered content from automatic
+extraction (normalizing dates, punctuation, spaces and equivalent numeric clock forms). Other clauses remain
+extractable; original L2 events, summaries and checkpoints are preserved.
+Paraphrased tool content is conservatively left extractable rather than silently
+discarding user information. This does not guarantee semantic deduplication.
+This requires the SDK version containing `record_turn(extraction_text=...)`.
+Automatic `mem0-derived` records can also be updated and removed.
+
+Removal previews exactly one record and returns a five-minute confirmation
+phrase. A subsequent non-bot message from the same author and session must match
+that phrase exactly. Session switching, expiry or a changed revision invalidates
+consent. Model tool arguments cannot confirm deletion. Multiple records require
+separate previews and confirmations. Up to 32 previews remain independently
+pending; repeating a preview for the same record replaces its previous challenge.
+
+The isolated launcher uses a per-process development confirmation token.
+For production, provision `confirmation_secret_file` in the provider config with
+the same private file configured through memoryd's
+`--adapter-confirmation-secret-file`, and establish Runtime registration normally.
+The secret must never appear in prompts or tool results. Missing provisioning
+returns `trusted_confirmation_unavailable`. Production token signing is tested;
+full production registration and deletion are not covered by the development
+acceptance script.
+
+## Lifecycle scope
+
+Install this provider as an external plugin without modifying Hermes source.
+Acceptance covers the callbacks and tools available in the pinned host version;
+missing host callbacks are documented limits, not a requirement to patch Hermes.
+
+Hermes v0.21.7 supplies turn-start, completed-turn, session-switch and
+pre-compression callbacks to a memory provider. The pre-compression integration
+stores a structured summary boundary and message hashes, not a complete host
+context snapshot. It does not implement an immediate cancellation callback or
+claim full Runtime lifecycle parity. Administrative memory APIs not exposed as
+model tools require separate SDK acceptance; successful chat CRUD alone does
+not verify them.

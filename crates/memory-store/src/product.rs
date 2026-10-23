@@ -2,7 +2,6 @@ use crate::{ServiceResult, Store};
 use memory_protocol::ServiceError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -12,7 +11,6 @@ use uuid::Uuid;
 const PRODUCT_CONFIG_SCHEMA_VERSION: u32 = 1;
 const MAX_PRODUCT_CONFIG_BYTES: u64 = 64 * 1024;
 pub(crate) const DEFAULT_MAX_DATABASE_BYTES: i64 = 512 * 1024 * 1024;
-pub(crate) const DEFAULT_MAX_BACKUP_BYTES: i64 = 512 * 1024 * 1024;
 pub(crate) const DEFAULT_MIN_FREE_BYTES: i64 = 64 * 1024 * 1024;
 
 /// Where semantic indexing is served from since 0.1.17: the spacemit-ai-gateway
@@ -35,30 +33,29 @@ const LEGACY_EMBEDDING_MODEL: &str = "qwen3-embedding-0.6b";
 /// merely carries this tag. It is deliberately a plain tag and not a
 /// `slot:important` slot: `validate_tags` allows at most one `slot:` tag per
 /// record, so a slot would collide with the record own field slot.
+///
+/// `pub` so the constant stays part of the module's documented surface: the
+/// Python SDK mirrors it and the mark is enforced through `long_term` tags. It
+/// no longer gates an upload scope, because cloud backup is retired.
+#[allow(dead_code)]
 pub(crate) const IMPORTANT_MEMORY_TAG: &str = "important";
 
-/// Scopes a Capsule may carry. `summaries` (L2 conversation summaries) is
-/// deliberately absent: MEM-L4-02 forbids a Capsule from containing L2 text and
-/// the 2026-09-07 product decision keeps conversation summaries off the upload
-/// path, so the scope is neither offered by default nor accepted by validation.
+/// Keys 0.1.28 wrote into `memory.config.json` for cloud backup, retired by the
+/// 2026-10-16 product change. They are dropped before deserialization so that
+/// `deny_unknown_fields` keeps rejecting real typos while a config left behind
+/// by the previous package still loads.
 ///
-/// `important` carries the records the user marked important. It is its own
-/// scope rather than a `kind` because the mark is orthogonal to the content
-/// category, and it cannot ride along with `preferences` because that scope
-/// only matches `kind == "preference"`.
-pub(crate) const BACKUP_SCOPES: [&str; 4] = [
-    "preferences",
-    "development_habits",
-    "schedule_habits",
-    "important",
+/// Nothing in this build reads, validates, or writes them back: the next
+/// settings write persists a file without these keys.
+const RETIRED_BACKUP_KEYS: [&str; 4] = [
+    "cloud_backup_enabled",
+    "backup_frequency",
+    "backup_scopes",
+    "max_backup_bytes",
 ];
 
 fn default_max_database_bytes() -> i64 {
     DEFAULT_MAX_DATABASE_BYTES
-}
-
-fn default_max_backup_bytes() -> i64 {
-    DEFAULT_MAX_BACKUP_BYTES
 }
 
 fn default_min_free_bytes() -> i64 {
@@ -76,9 +73,6 @@ pub(crate) struct ProductConfig {
     pub retention_days: i64,
     pub audit_enabled: bool,
     pub sensitive_action_confirmation: String,
-    pub cloud_backup_enabled: bool,
-    pub backup_frequency: String,
-    pub backup_scopes: Vec<String>,
     pub preference_auto_apply_enabled: bool,
     pub development_habit_auto_apply_enabled: bool,
     pub recent_turn_limit: i64,
@@ -97,8 +91,6 @@ pub(crate) struct ProductConfig {
     /// than per-Agent settings, so one namespace cannot exhaust the device.
     #[serde(default = "default_max_database_bytes")]
     pub max_database_bytes: i64,
-    #[serde(default = "default_max_backup_bytes")]
-    pub max_backup_bytes: i64,
     #[serde(default = "default_min_free_bytes")]
     pub min_free_bytes: i64,
 }
@@ -114,12 +106,6 @@ impl Default for ProductConfig {
             retention_days: 0,
             audit_enabled: true,
             sensitive_action_confirmation: "standard".to_owned(),
-            cloud_backup_enabled: false,
-            backup_frequency: "weekly".to_owned(),
-            backup_scopes: BACKUP_SCOPES
-                .iter()
-                .map(|scope| (*scope).to_owned())
-                .collect(),
             preference_auto_apply_enabled: true,
             development_habit_auto_apply_enabled: true,
             recent_turn_limit: 5,
@@ -129,7 +115,6 @@ impl Default for ProductConfig {
             summary_model: SummaryModelConfig::default(),
             embedding: EmbeddingConfig::default(),
             max_database_bytes: DEFAULT_MAX_DATABASE_BYTES,
-            max_backup_bytes: DEFAULT_MAX_BACKUP_BYTES,
             min_free_bytes: DEFAULT_MIN_FREE_BYTES,
         }
     }
@@ -282,9 +267,6 @@ pub(crate) struct ProductConfigPatch {
     pub retention_days: Option<i64>,
     pub audit_enabled: Option<bool>,
     pub sensitive_action_confirmation: Option<String>,
-    pub cloud_backup_enabled: Option<bool>,
-    pub backup_frequency: Option<String>,
-    pub backup_scopes: Option<Vec<String>>,
     pub preference_auto_apply_enabled: Option<bool>,
     pub development_habit_auto_apply_enabled: Option<bool>,
     pub recent_turn_limit: Option<i64>,
@@ -294,7 +276,6 @@ pub(crate) struct ProductConfigPatch {
     pub summary_model: Option<SummaryModelConfig>,
     pub embedding: Option<EmbeddingConfig>,
     pub max_database_bytes: Option<i64>,
-    pub max_backup_bytes: Option<i64>,
     pub min_free_bytes: Option<i64>,
 }
 
@@ -306,9 +287,6 @@ impl ProductConfigPatch {
             && self.retention_days.is_none()
             && self.audit_enabled.is_none()
             && self.sensitive_action_confirmation.is_none()
-            && self.cloud_backup_enabled.is_none()
-            && self.backup_frequency.is_none()
-            && self.backup_scopes.is_none()
             && self.preference_auto_apply_enabled.is_none()
             && self.development_habit_auto_apply_enabled.is_none()
             && self.recent_turn_limit.is_none()
@@ -318,7 +296,6 @@ impl ProductConfigPatch {
             && self.summary_model.is_none()
             && self.embedding.is_none()
             && self.max_database_bytes.is_none()
-            && self.max_backup_bytes.is_none()
             && self.min_free_bytes.is_none()
     }
 }
@@ -435,15 +412,6 @@ impl Store {
         if let Some(value) = patch.sensitive_action_confirmation.as_ref() {
             config.sensitive_action_confirmation = value.trim().to_owned();
         }
-        if let Some(value) = patch.cloud_backup_enabled {
-            config.cloud_backup_enabled = value;
-        }
-        if let Some(value) = patch.backup_frequency.as_ref() {
-            config.backup_frequency = value.trim().to_owned();
-        }
-        if let Some(value) = patch.backup_scopes.as_ref() {
-            config.backup_scopes = value.clone();
-        }
         if let Some(value) = patch.preference_auto_apply_enabled {
             config.preference_auto_apply_enabled = value;
         }
@@ -470,9 +438,6 @@ impl Store {
         }
         if let Some(value) = patch.max_database_bytes {
             config.max_database_bytes = value;
-        }
-        if let Some(value) = patch.max_backup_bytes {
-            config.max_backup_bytes = value;
         }
         if let Some(value) = patch.min_free_bytes {
             config.min_free_bytes = value;
@@ -508,21 +473,6 @@ impl Store {
             "retention_days":config.retention_days,
             "audit_enabled":config.audit_enabled,
             "sensitive_action_confirmation":config.sensitive_action_confirmation,
-            "backup_enabled":config.cloud_backup_enabled,
-            "backup_frequency":config.backup_frequency,
-            "backup_scopes":config.backup_scopes,
-            // Whether this daemon can actually upload capsules to the cloud.
-            // Every deb deployment configures a local capsule directory
-            // (--backup-directory), so a plain is_some() would report true
-            // everywhere and resurrect dead cloud toggles; only the HTTP
-            // adapter (started via --backup-base-url/--backup-api-key/
-            // --capsule-key-file) counts. Settings UIs combine this with
-            // identity.cloud_upload_allowed to decide whether the cloud-backup
-            // controls are offered at all.
-            "backup_supported":self
-                .backup_storage
-                .as_ref()
-                .is_some_and(|adapter| adapter.is_cloud()),
             "preference_auto_apply_enabled":config.preference_auto_apply_enabled,
             "development_habit_auto_apply_enabled":config.development_habit_auto_apply_enabled,
             "recent_turn_limit":config.recent_turn_limit,
@@ -532,7 +482,6 @@ impl Store {
             "summary_model":config.summary_model
             ,"embedding":config.embedding
             ,"max_database_bytes":config.max_database_bytes
-            ,"max_backup_bytes":config.max_backup_bytes
             ,"min_free_bytes":config.min_free_bytes
         }))
     }
@@ -576,8 +525,22 @@ fn parse_config(path: &Path) -> ServiceResult<ProductConfig> {
     }
     let encoded =
         fs::read(path).map_err(|_| ServiceError::unavailable("product config is unreadable"))?;
-    serde_json::from_slice(&encoded)
-        .map_err(|_| ServiceError::invalid("product config is malformed"))
+    let value: Value = serde_json::from_slice(&encoded)
+        .map_err(|_| ServiceError::invalid("product config is malformed"))?;
+    read_config_value(value)
+}
+
+fn read_config_value(mut value: Value) -> ServiceResult<ProductConfig> {
+    // Retired cloud-backup keys are dropped before the typed parse so the
+    // `deny_unknown_fields` contract still catches genuine typos while a file
+    // written by 0.1.28 keeps loading. They are not carried in the struct and
+    // therefore disappear from the file on the next settings write.
+    if let Some(object) = value.as_object_mut() {
+        for key in RETIRED_BACKUP_KEYS {
+            object.remove(key);
+        }
+    }
+    serde_json::from_value(value).map_err(|_| ServiceError::invalid("product config is malformed"))
 }
 
 /// Parse the file and converge everything an earlier package owned, reporting
@@ -598,21 +561,14 @@ fn read_config(path: &Path) -> ServiceResult<ProductConfig> {
 /// Move values a previous package shipped but this one no longer owns onto what
 /// this device actually serves.
 fn converge_config(config: &mut ProductConfig) {
-    // 0.1.16 retired the `summaries` scope, but 0.1.15 wrote it into this file
-    // as part of the old default, and `validate_config` below is now strict
-    // about it. Converge the stored list on load so an upgraded device keeps
-    // serving its settings page and its scheduler instead of failing to read
-    // its own config; `initialize_product_config` persists the converged list
-    // (see `update_product_config` for the settings path).
-    config.backup_scopes = converged_backup_scopes(&config.backup_scopes);
     // 0.1.17 moved semantic indexing onto the Gateway, but every device that
     // saved its settings between 0.1.9 and 0.1.16 persisted the old endpoint
     // and the old model *label*. The section is explicit, so the new default
     // would never apply and the device would silently fall back to lexical
     // recall -- with the old server retired, nothing would serve 18801 any
     // more. Converge exactly that shipped pair; anything else is an operator's
-    // deliberate choice and is left alone. As with the retired scope, the
-    // in-memory value is what every reader and the settings page see.
+    // deliberate choice and is left alone. The in-memory value is what every
+    // reader and the settings page see.
     converged_embedding(&mut config.embedding);
 }
 
@@ -689,13 +645,6 @@ fn validate_config(config: &ProductConfig) -> ServiceResult<()> {
             "sensitive_action_confirmation must be loose, standard, or strict",
         ));
     }
-    if !matches!(
-        config.backup_frequency.as_str(),
-        "manual" | "daily" | "weekly" | "monthly"
-    ) {
-        return Err(ServiceError::invalid("invalid backup_frequency"));
-    }
-    validate_backup_scopes(&config.backup_scopes)?;
     if !(1..=50).contains(&config.recent_turn_limit)
         || !(1..=20).contains(&config.recent_session_limit)
         || !(1..=50).contains(&config.summary_interval_turns)
@@ -715,41 +664,11 @@ fn validate_storage_limits(config: &ProductConfig) -> ServiceResult<()> {
     const MAX_DATABASE_LIMIT: i64 = 8 * 1024 * 1024 * 1024;
     const MAX_FREE_LIMIT: i64 = 8 * 1024 * 1024 * 1024;
     if !(MIN_DATABASE_LIMIT..=MAX_DATABASE_LIMIT).contains(&config.max_database_bytes)
-        || !(MIN_DATABASE_LIMIT..=MAX_DATABASE_LIMIT).contains(&config.max_backup_bytes)
         || !(0..=MAX_FREE_LIMIT).contains(&config.min_free_bytes)
     {
         return Err(ServiceError::invalid("invalid local storage limits"));
     }
     Ok(())
-}
-
-fn validate_backup_scopes(scopes: &[String]) -> ServiceResult<()> {
-    if scopes.is_empty()
-        || scopes
-            .iter()
-            .any(|scope| !BACKUP_SCOPES.contains(&scope.as_str()))
-    {
-        return Err(ServiceError::invalid("invalid backup_scopes"));
-    }
-    Ok(())
-}
-
-/// Drop scopes the server no longer accepts (currently only `summaries`) plus
-/// duplicates, preserving the caller's order.
-///
-/// Devices that upgraded from 0.1.15 still have the old four-scope default
-/// persisted in `memory_settings`, and rejecting it outright would fail
-/// validation on the settings read path and turn every scheduled backup into a
-/// background error. Reader, writer and scheduler therefore converge the stored
-/// list instead of trusting it.
-pub(crate) fn converged_backup_scopes(scopes: &[String]) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    scopes
-        .iter()
-        .filter(|scope| BACKUP_SCOPES.contains(&scope.as_str()))
-        .filter(|scope| seen.insert(scope.as_str()))
-        .cloned()
-        .collect()
 }
 
 /// Repoint the shipped legacy embedding endpoint at the Gateway.
@@ -879,7 +798,12 @@ mod tests {
         let config = ProductConfig::default();
         validate_config(&config).unwrap();
         assert_eq!(config.default_account_id, "default");
-        assert!(!config.cloud_backup_enabled);
+        // Cloud backup is retired: the serialized default carries no backup
+        // key at all, so a fresh install never advertises it.
+        let serialized = serde_json::to_value(&config).unwrap();
+        for key in RETIRED_BACKUP_KEYS {
+            assert!(serialized.get(key).is_none(), "{key} must not be written");
+        }
         assert_eq!(config.recent_turn_limit, 5);
         assert_eq!(config.summary_interval_turns, 5);
         assert_eq!(config.summary_retention_days, 7);
@@ -903,8 +827,6 @@ mod tests {
         config.max_database_bytes = 15 * 1024 * 1024;
         assert!(validate_config(&config).is_err());
         config.max_database_bytes = DEFAULT_MAX_DATABASE_BYTES;
-        config.max_backup_bytes = 9 * 1024 * 1024 * 1024;
-        assert!(validate_config(&config).is_err());
 
         let legacy = serde_json::json!({
             "schema_version": 1,
@@ -926,35 +848,72 @@ mod tests {
             "summary_retention_days": 7,
             "summary_model": {}
         });
-        let restored: ProductConfig = serde_json::from_value(legacy).unwrap();
+        // The typed parse goes through the same retired-key filter as the file
+        // path; a bare `from_value` would (correctly) reject the dead keys.
+        let restored = read_config_value(legacy).unwrap();
         assert_eq!(restored.max_database_bytes, DEFAULT_MAX_DATABASE_BYTES);
         assert_eq!(restored.min_free_bytes, DEFAULT_MIN_FREE_BYTES);
         validate_config(&restored).unwrap();
     }
 
     #[test]
-    fn legacy_config_file_with_the_retired_scope_still_loads() {
+    fn a_config_written_by_0_1_28_still_loads_and_drops_its_retired_keys() {
+        // A test device that upgraded in place still has this section on disk.
+        // `ProductConfig` denies unknown fields, so the retired keys are
+        // stripped before the typed parse instead of becoming a start failure.
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("memory.config.json");
-        let mut legacy = serde_json::to_value(ProductConfig::default()).unwrap();
-        legacy["backup_scopes"] = serde_json::json!(["summaries", "preferences"]);
+        let mut legacy = serde_json::json!({
+            "schema_version": 1,
+            "default_account_id": "default",
+            "local_device_id": "k3-development",
+            "timezone": "Asia/Shanghai",
+            "memory_enabled": true,
+            "retention_days": 30,
+            "audit_enabled": true,
+            "sensitive_action_confirmation": "standard",
+            "cloud_backup_enabled": false,
+            "backup_frequency": "weekly",
+            "backup_scopes": ["preferences", "development_habits", "schedule_habits"],
+            "preference_auto_apply_enabled": true,
+            "development_habit_auto_apply_enabled": true,
+            "recent_turn_limit": 5,
+            "recent_session_limit": 5,
+            "summary_interval_turns": 5,
+            "summary_retention_days": 7,
+            "summary_model": {},
+            "max_database_bytes": 536870912,
+            "max_backup_bytes": 536870912,
+            "min_free_bytes": 67108864
+        });
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-        // 0.1.15 persisted exactly this file; rejecting it on load would break
-        // the settings page and the scheduler on every upgraded device.
         let loaded = read_config(&path).unwrap();
-        assert_eq!(loaded.backup_scopes, vec!["preferences".to_owned()]);
+        assert_eq!(loaded.retention_days, 30);
+        let serialized = serde_json::to_value(&loaded).unwrap();
+        for key in RETIRED_BACKUP_KEYS {
+            assert!(serialized.get(key).is_none(), "{key} must not survive a parse");
+        }
 
-        // Convergence is not a blanket "ignore anything": a file whose scopes are
-        // all unknown still fails validation.
+        // Reading alone does not rewrite the file; the retired keys disappear
+        // the next time a setting is written.
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let (_, converged) = read_config_converged(&path).unwrap();
+        assert!(!converged);
+        let persisted: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted["backup_frequency"], "weekly");
+
+        // Any legacy value is tolerated, including one 0.1.28 would have
+        // rejected: the keys no longer take part in validation at all.
+        legacy["backup_frequency"] = serde_json::json!("hourly");
         legacy["backup_scopes"] = serde_json::json!(["bogus"]);
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-        assert_eq!(read_config(&path).unwrap_err().code, "InvalidArgument");
+        assert!(read_config(&path).is_ok());
 
-        // The file is rewritten converged, so the strictness never resurfaces.
-        legacy["backup_scopes"] = serde_json::json!(["summaries", "schedule_habits"]);
+        // A genuinely unknown key is still rejected: tolerating four retired
+        // names must not turn the config into a free-form document.
+        legacy["memroy_enabled"] = serde_json::json!(true);
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-        let loaded = read_config(&path).unwrap();
-        assert_eq!(loaded.backup_scopes, vec!["schedule_habits".to_owned()]);
+        assert_eq!(read_config(&path).unwrap_err().code, "InvalidArgument");
     }
 
     #[test]
@@ -1028,44 +987,18 @@ mod tests {
         let (_, converged) = read_config_converged(&path).unwrap();
         assert!(!converged);
 
-        // The retired backup scope is persisted by the same mechanism.
+        // Retired cloud-backup keys never make the config look "converged":
+        // convergence is about endpoint repair, and dropping a dead key is
+        // not a rewrite startup has to perform.
         let mut retired = serde_json::to_value(ProductConfig::default()).unwrap();
-        retired["backup_scopes"] = serde_json::json!(["summaries", "preferences"]);
+        retired["backup_frequency"] = serde_json::json!("monthly");
         std::fs::write(&path, serde_json::to_vec(&retired).unwrap()).unwrap();
         let (loaded, converged) = read_config_converged(&path).unwrap();
-        assert!(converged);
-        assert_eq!(loaded.backup_scopes, vec!["preferences".to_owned()]);
-    }
-
-    #[test]
-    fn summaries_scope_is_retired_and_legacy_values_converge() {
-        // MEM-L4-02: a Capsule must not contain L2 conversation summaries, so the
-        // scope is gone from the default and from every allow list.
-        assert_eq!(
-            ProductConfig::default().backup_scopes,
-            vec![
-                "preferences".to_owned(),
-                "development_habits".to_owned(),
-                "schedule_habits".to_owned(),
-                "important".to_owned()
-            ]
-        );
-        let mut retired = ProductConfig::default();
-        retired.backup_scopes = vec!["summaries".to_owned()];
-        assert_eq!(validate_config(&retired).unwrap_err().code, "InvalidArgument");
-
-        // A device that still holds the 0.1.15 value converges instead of failing,
-        // and the converged list is ordered + de-duplicated.
-        assert_eq!(
-            converged_backup_scopes(&[
-                "summaries".to_owned(),
-                "preferences".to_owned(),
-                "preferences".to_owned(),
-                "schedule_habits".to_owned(),
-            ]),
-            vec!["preferences".to_owned(), "schedule_habits".to_owned()]
-        );
-        assert!(converged_backup_scopes(&["summaries".to_owned()]).is_empty());
+        assert!(!converged);
+        assert!(serde_json::to_value(&loaded)
+            .unwrap()
+            .get("backup_frequency")
+            .is_none());
     }
 
     #[test]
@@ -1132,7 +1065,7 @@ mod tests {
             "summary_retention_days": 7,
             "summary_model": {}
         });
-        let restored: ProductConfig = serde_json::from_value(legacy).unwrap();
+        let restored = read_config_value(legacy).unwrap();
         assert_eq!(restored.embedding.enabled, !disabled_by_env);
         assert_eq!(
             restored.embedding.base_url.as_deref(),

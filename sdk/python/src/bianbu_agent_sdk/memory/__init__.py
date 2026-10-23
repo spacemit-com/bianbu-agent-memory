@@ -1,7 +1,6 @@
 from .client import AsyncMemoryClient, MemoryClient
 from .errors import (
     AccountOffline,
-    BackupUnavailable,
     Conflict,
     DeadlineExceeded,
     InvalidArgument,
@@ -70,7 +69,6 @@ __all__ = [
     "ServerUnavailable",
     "AccountOffline",
     "SyncPending",
-    "BackupUnavailable",
     "ModelUnavailable",
     "ProtocolMismatch",
     "EvidenceRef",

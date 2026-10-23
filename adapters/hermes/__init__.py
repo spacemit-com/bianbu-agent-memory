@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import secrets
+import time
 import logging
 import os
 import queue
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -40,6 +44,10 @@ class BianbuMemoryProvider(MemoryProvider):
         self._prefetch_cache: dict[str, tuple[str, str]] = {}
         self._turns: dict[str, int] = {}
         self._instruction_block = ""
+        self._pending_deletes: dict[str, tuple[Any, ...]] = {}
+        self._turn_notice = ""
+        self._author_id = None
+        self._explicit_contents: list[str] = []
         self._bridge: Any = None
         self._async_runner: Any = None
         self._accepting = True
@@ -87,12 +95,162 @@ class BianbuMemoryProvider(MemoryProvider):
         return self._instruction_block + "\n" + current_time_context() + (
             "\nMemory resolves relative dates at recording time. Use the current local date "
             "for 明天/tomorrow; do not request an absolute date unless the user's meaning is ambiguous."
+            "\nFor requests to remember/save (记住/保存), call bianbu_memory_save with target=user for personal "
+            "preferences or target=memory for environment facts. Use bianbu_memory_search/update/remove for "
+            "canonical memory. When the user explicitly asks to save an environment note, save the full "
+            "note with target=memory immediately, preserving the user wording verbatim (do not paraphrase); do not ask them to choose a storage target or reminder "
+            "mode. Saving a dated note does not create an alarm. Preserve identifiers supplied by the user. "
+            "Only claim success after a successful tool result. Plain text/XML is NOT a tool call. "
+            "Do not use the native memory file tool for canonical writes/deletion. Deletion requires the user "
+            "to send the exact confirmation message as a new turn; tools cannot confirm deletion. "
+            "On a delete request, FIRST call bianbu_memory_remove for every selected record to obtain "
+            "its real confirmation_message. This is a read-only preview and needs no prior consent. "
+            "Never invent a confirmation phrase or ask for confirmation before calling the preview tool."
+
         )
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        # Stable-ID mutation stays in the Bianbu SDK instead of adding a second
-        # model-facing tool vocabulary to Hermes.
-        return []
+        specs = [
+            ("search", "Search canonical long-term memory; returns IDs, text and revisions.",
+             {"query": {"type": "string"}}, ["query"]),
+            ("save", "Save explicit user-requested long-term memory. Relative dates are resolved automatically. Report saved ONLY if success=true.",
+             {"content": {"type": "string"}, "target": {"type": "string", "enum": ["user", "memory"]}}, ["content", "target"]),
+            ("update", "Update a searched record by ID and expected revision.",
+             {"memory_id": {"type": "string"}, "expected_revision": {"type": "integer"}, "content": {"type": "string"}}, ["memory_id", "expected_revision", "content"]),
+            ("remove", "Preview ONE record for deletion. Does not delete. Ask user to send the exact confirmation returned, as a new message.",
+             {"memory_id": {"type": "string"}}, ["memory_id"]),
+        ]
+        return [{"name": "bianbu_memory_" + name, "description": description,
+                 "parameters": {"type": "object", "properties": props, "required": required,
+                                "additionalProperties": False}}
+                for name, description, props, required in specs]
+
+    def _call_worker(self, callback: Any) -> dict[str, Any]:
+        ready = threading.Event()
+        result: dict[str, Any] = {}
+        def run() -> None:
+            try:
+                result.update(callback())
+            except Exception as error:
+                from bianbu_agent_sdk.memory.runtime import _failure_payload
+                result.update(_failure_payload(error))
+            finally:
+                ready.set()
+        if not self._accepting:
+            return {"success": False, "code": "provider_closed"}
+        try:
+            self._jobs.put_nowait(("call", (run,)))
+        except queue.Full:
+            return {"success": False, "code": "queue_full"}
+        if not ready.wait(15):
+            return {"success": False, "code": "outcome_unknown", "message": "Check memory before retrying."}
+        return result
+
+    def _run_call(self, callback: Any) -> None:
+        callback()
+
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        if tool_name not in {s["name"] for s in self.get_tool_schemas()}:
+            return json.dumps({"success": False, "code": "unknown_tool"})
+        if tool_name != "bianbu_memory_search" and not self._write_enabled:
+            return json.dumps({"success": False, "code": "read_only"})
+        return json.dumps(self._call_worker(lambda: self._tool_operation(tool_name, args)), ensure_ascii=False)
+
+    def _tool_operation(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name == "bianbu_memory_search":
+            result = self._async_runner.run(self._bridge.recall_structured_with_status(
+                str(args["query"]), top_k=10, max_chars=10000))
+            result["records"] = [{"memory_id": r.memory_id, "text": r.text,
+                                  "revision": r.revision, "kind": r.kind.value,
+                                  "tags": list(r.tags)} for r in result.pop("items", [])]
+            return result
+        if name == "bianbu_memory_save":
+            result = self._async_runner.run(self._bridge.upsert_explicit(
+                content=args["content"], target=args["target"],
+                run_id=f"hermes-tool:{self._session_id}:{_digest(args['content'])}", session_id=self._session_id))
+        else:
+            records = self._client.long_term.get_many([args["memory_id"]])
+            if not records:
+                return {"success": False, "code": "memory_not_found"}
+            record = records[0]
+            if not any(t in record.tags for t in ("personal-agent", "hermes-curated", "mem0-derived")):
+                return {"success": False, "code": "not_adapter_owned"}
+            if name == "bianbu_memory_update":
+                from bianbu_agent_sdk.memory.temporal import normalize_relative_dates
+                from bianbu_agent_sdk.memory.ontology import validate_memory_text
+                target = "user" if "user" in record.tags or record.kind.value in {"profile", "preference"} else "memory"
+                content = normalize_relative_dates(args["content"].strip())
+                if validate_memory_text(target, content) is not None:
+                    return {"success": False, "code": "invalid_content"}
+                receipt = self._client.long_term.revise(record.memory_id, text=content,
+                    expected_revision=args["expected_revision"],
+                    idempotency_key=f"hermes-tool-update:{record.memory_id}:{args['expected_revision']}:{_digest(content)}")
+                result = {"success": True, "memory_id": receipt.memory_id, "revision": receipt.revision}
+            else:
+                if not self._confirmation_token():
+                    return {"success": False, "code": "trusted_confirmation_unavailable"}
+                challenge = "确认删除 " + secrets.token_hex(12)
+                self._pending_deletes = {k: v for k, v in self._pending_deletes.items()
+                                         if v[4] > time.monotonic() and v[0] == self._session_id
+                                         and v[2] != record.memory_id}
+                if len(self._pending_deletes) >= 32:
+                    return {"success": False, "code": "too_many_pending_confirmations"}
+                self._pending_deletes[challenge] = (self._session_id, self._author_id, record.memory_id,
+                                        record.revision, time.monotonic() + 300, challenge)
+                return {"success": False, "code": "confirmation_required", "memory_id": record.memory_id,
+                        "text": record.text, "revision": record.revision, "confirmation_message": challenge}
+        if result.get("success"):
+            self._explicit_contents.append(str(args["content"]))
+        with self._cache_lock:
+            self._prefetch_cache.clear()
+        return result
+
+    def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
+        self._explicit_contents = []
+        self._author_id = kwargs.get("author_id")
+        self._turn_notice = ""
+        self._pending_deletes = {k: v for k, v in self._pending_deletes.items()
+                                 if v[4] > time.monotonic() and v[0] == self._session_id}
+        pending = self._pending_deletes.get(message.strip())
+        if pending is None or not self._write_enabled:
+            return
+        session, author, memory_id, revision, expiry, challenge = pending
+        if time.monotonic() > expiry or session != self._session_id:
+            self._pending_deletes.pop(challenge, None)
+            return
+        if kwargs.get("author_is_bot") or author != self._author_id or message.strip() != challenge:
+            return
+        self._pending_deletes.pop(challenge, None)
+        def remove() -> dict[str, Any]:
+            records = self._client.long_term.get_many([memory_id])
+            if not records or records[0].revision != revision:
+                return {"success": False, "code": "confirmation_stale"}
+            token = self._confirmation_token()
+            if not token:
+                return {"success": False, "code": "trusted_confirmation_unavailable"}
+            job = self._client.long_term.forget(memory_id, confirm_token=token, reason_code="user_request",
+                                               idempotency_key="hermes-confirm:" + _digest(challenge))
+            status = self._client.long_term.wait_forget(job.job_id)
+            with self._cache_lock:
+                self._prefetch_cache.clear()
+            hidden = bool(status.get("local_hidden"))
+            return {"success": hidden,
+                    "code": "removed" if hidden else "forget_pending",
+                    "memory_id": memory_id, "job_id": job.job_id}
+        self._turn_notice = "Memory deletion result: " + json.dumps(self._call_worker(remove), ensure_ascii=False)
+
+    def _confirmation_token(self) -> str | None:
+        # Production provisioning must grant this host access to the same secret
+        # configured in memoryd. Never accept tokens supplied by model arguments.
+        secret_file = self._config.get("confirmation_secret_file")
+        if secret_file:
+            from bianbu_agent_sdk.memory.bibit_adapter import _confirmation_token
+            try:
+                secret = Path(secret_file).read_bytes()
+            except OSError:
+                return None
+            return _confirmation_token(secret, "long_term.forget") if secret else None
+        return os.environ.get("BIANBU_MEMORY_DEV_CONFIRM_TOKEN")
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not query or self._client is None:
@@ -111,8 +269,8 @@ class BianbuMemoryProvider(MemoryProvider):
             with self._cache_lock:
                 cached = self._prefetch_cache.get(key)
             if cached is None or cached[0] != fingerprint:
-                return ""
-        return cached[1]
+                return self._turn_notice
+        return self._turn_notice + "\n" + cached[1]
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if query:
@@ -135,7 +293,8 @@ class BianbuMemoryProvider(MemoryProvider):
         else:
             turn = self._turns.get(active_session, 0) + 1
             self._turns[active_session] = turn
-        self._enqueue("turn", active_session, turn, user_content, assistant_content)
+        self._enqueue("turn", active_session, turn, user_content, assistant_content,
+                      tuple(self._explicit_contents))
 
     def on_memory_write(
         self,
@@ -147,16 +306,16 @@ class BianbuMemoryProvider(MemoryProvider):
         if not self._write_enabled:
             return
         metadata = dict(metadata or {})
-        self._enqueue(
-            "memory_write",
-            action,
-            target,
-            content,
-            # v0.21.7 supplies the complete selected entry under the native
-            # store lock. old_text can be only a substring, not record identity.
-            str(metadata.get("previous_content") or ""),
-            str(metadata.get("session_id") or self._session_id),
-        )
+        # Wait for the queued canonical write before snapshotting covered content
+        # in sync_turn. Failed writes must remain eligible for automatic ingestion.
+        def write() -> dict[str, Any]:
+            self._run_memory_write(action, target, content,
+                str(metadata.get("previous_content") or ""),
+                str(metadata.get("session_id") or self._session_id))
+            return {"success": True}
+        result = self._call_worker(write)
+        if action == "add" and result.get("success"):
+            self._explicit_contents.append(content)
 
     def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
         if self._write_enabled and messages:
@@ -176,6 +335,8 @@ class BianbuMemoryProvider(MemoryProvider):
         rewound: bool = False,
         **kwargs: Any,
     ) -> None:
+        self._pending_deletes.clear()
+        self._turn_notice = ""
         self._session_id = new_session_id
         if reset or rewound:
             self._turns.pop(new_session_id, None)
@@ -267,7 +428,7 @@ class BianbuMemoryProvider(MemoryProvider):
             for record in records:
                 safe_text = record.text[:1000].replace("</memory-context>", "&lt;/memory-context&gt;")
                 lines.append(
-                    f"- [{record.kind.value}; revision={record.revision}; source={record.source}] {safe_text}"
+                    f"- [id={record.memory_id}; {record.kind.value}; revision={record.revision}; source={record.source}] {safe_text}"
                 )
             block = (
                 "<memory-context trust=\"untrusted-recalled-content\">\n"
@@ -283,6 +444,7 @@ class BianbuMemoryProvider(MemoryProvider):
         turn: int,
         user_content: str,
         assistant_content: str,
+        explicit_contents: tuple[str, ...] = (),
     ) -> None:
         success = self._async_runner.run(
             self._bridge.record_turn(
@@ -291,6 +453,7 @@ class BianbuMemoryProvider(MemoryProvider):
                 agent_id="hermes",
                 user_text=user_content,
                 assistant_text=assistant_content,
+                extraction_text=_unhandled_text(user_content, explicit_contents),
             )
         )
         if not success:
@@ -403,6 +566,65 @@ class BianbuMemoryProvider(MemoryProvider):
         self._instruction_block = "# Bianbu Memory Instructions\n" + "\n".join(lines)
 
 
+def _unhandled_text(user_text: str, explicit_contents: tuple[str, ...]) -> str:
+    """Subtract only literal tool-covered clauses; never discard the whole turn.
+
+    Normalize dates before matching, and ignore punctuation/spacing differences.
+    Paraphrases cannot prove coverage and deliberately remain extractable.
+    """
+    from bianbu_agent_sdk.memory.temporal import normalize_relative_dates
+    if not explicit_contents:
+        return user_text
+    text = normalize_relative_dates(user_text)
+    def compact(value: str) -> str:
+        # Models may expand tomorrow into an equivalent explicit date.
+        value = re.sub(r"(\d{4}-\d{2}-\d{2})\s*[（(]\s*\1\s*[）)]", r"\1", value)
+        value = re.sub(r"(?:早上|上午|凌晨)?\s*(\d{1,2})\s*点(?:整)?", lambda m: f" {int(m[1])}:00", value)
+        value = re.sub(r"(?<!\d)0?(\d{1,2}):00(?!\d)", lambda m: f"{int(m[1])}:00", value)
+        # Drop a datetime annotation only when BOTH date and clock agree.
+        # A different time/date remains visible and cannot prove coverage.
+        value = re.sub(
+            r"(\d{4}-\d{2}-\d{2})\s*(\d{1,2}):00\s*[（(]\s*\1\s+\2:00(?:\s+CST)?\s*[）)]",
+            r"\1 \2:00", value)
+        # Only reorder a strictly delimited event label, never arbitrary words
+        # (subject/object order can change the meaning of a saved fact).
+        value = re.sub(r"(\d{4}-\d{2}-\d{2}\s*\d{1,2}:00\s*会议)\s*[：:]\s*([A-Za-z][A-Za-z0-9_-]*)\s*(?=[。；;\n]|$)",
+                       r"\2，\1", value)
+        # A leading event label and the same trailing noun are equivalent.
+        value = re.sub(r"^\s*会议\s*[：:]\s*(.*)$", r"\1会议", value)
+        value = re.sub(r"(?<!\d)0?(\d{1,2}):00(?!\d)", lambda m: f"{int(m[1])}时", value)
+        return "".join(c.casefold() for c in value if c.isalnum())
+    covered = [compact(normalize_relative_dates(c)) for c in explicit_contents]
+    # Tool-routing instructions are not memory content. Keep them separate from
+    # the factual clause so they cannot prevent an otherwise exact coverage match.
+    text = re.sub(r"[，,]?\s*(?:必须|请)?调用\s*bianbu_memory_\w+", "。", text)
+    # The tool may append metadata: still recognize a complete original clause
+    # contained in its payload, without deleting neighboring preference clauses.
+    # Hermes frequently joins a saved fact and a preference with “另外/此外”
+    # without punctuation. Treat those conjunctions as clause boundaries too.
+    text = re.sub(r"\s+(?=(?:另外|此外|同时|以后)\s*)", "。", text)
+    parts = re.split(r"([。；;\n])", text)
+    for index in range(0, len(parts), 2):
+        clause = re.sub(r"^\s*(?:请记住|记住|请保存|保存)\s*[：:,，]?", "", parts[index])
+        key = compact(clause)
+        if len(key) >= 8 and any(key in item for item in covered):
+            parts[index] = ""
+    text = "".join(parts)
+    for content in explicit_contents:
+        content = normalize_relative_dates(content)
+        chars = [c for c in content if c.isalnum()]
+        if not chars:
+            continue
+        pattern = r"[\W_]*".join(re.escape(c) for c in chars)
+        text = re.sub(pattern, "", text, flags=re.I)
+    # Empty imperative wrappers carry no fact; preserve every other clause.
+    clauses = re.split(r"[。；;\n]", text)
+    wrappers = {"请记住", "记住", "请保存", "保存到长期环境记忆", "保存到长期记忆",
+                "这是独立临时测试不是个人信息", "不要创建文件或闹钟", "不要创建闹钟或其他文件"}
+    return "。".join(c for c in clauses if re.sub(r"[\W_]", "", c) not in wrappers
+                    and re.search(r"\w", c))
+
+
 def _summary_patch(pointers: list[str]) -> Any:
     from bianbu_agent_sdk.memory import SessionSummaryPatch
 
@@ -432,3 +654,4 @@ class _WorkerLoop:
 
 
 __all__ = ["BianbuMemoryProvider"]
+

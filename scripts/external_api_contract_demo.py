@@ -218,18 +218,13 @@ async def exercise_external_callers(socket_path: Path) -> dict[str, object]:
         if not any("SQLite" in item for item in recent):
             raise AssertionError("Runtime bridge did not surface recent session status")
 
-        for operation in (
-            client.sync.request(
+        try:
+            await client.sync.request(
                 scopes=("preferences",), idempotency_key="external-contract-sync"
-            ),
-            client.backup.create(
-                scopes=("preferences",), idempotency_key="external-contract-backup"
-            ),
-        ):
-            try:
-                await operation
-            except Unauthenticated:
-                continue
+            )
+        except Unauthenticated:
+            pass
+        else:
             raise AssertionError("default account external operation did not fail closed")
 
         return {
@@ -249,7 +244,7 @@ async def exercise_external_callers(socket_path: Path) -> dict[str, object]:
             "l3_memory_id": memory.memory_id,
             "runtime_recall": True,
             "runtime_turn_persistence": True,
-            "default_sync_and_backup_rejected": True,
+            "default_sync_rejected": True,
         }
     finally:
         await bridge.close()
