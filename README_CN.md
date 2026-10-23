@@ -41,6 +41,9 @@
 - **memoryd** 负责“记”和“找”：落盘、检索、保留期、导出导入、审计；
 - **索引**负责“猜你想找什么”：FTS5 是基本盘，Embedding / Mem0 是加分项。
 
+> 名词说明：Runtime 指 Bianbu Agent Runtime（设备上的 Agent 运行时）；
+> Runtime Bridge 是它在进程内调用记忆服务的桥接层。
+
 索引永远只是派生数据。语义召回命中后，还要回到权威记录取当前版本，
 所以向量库里返回的文本不会被直接塞进模型上下文。
 
@@ -53,8 +56,8 @@
 | **分层记忆** | L1 记对话事件与完整轮次，L2 记工作摘要，L3 记长期偏好、习惯和重要标记 |
 | **找得回来** | 本地 FTS5 全文检索 + 有界读取；可选语义召回，失败自动回退词法 |
 | **记得安全** | SQLCipher 加密、事务写入、幂等回执、WAL、存储配额 |
-| **分得清楚** | 可信 Runtime 身份、Capability 校验、账号 / Agent / 记忆空间隔离 |
-| **管得住** | 保留期、隐私设置、清除历史 / 全部、JSON 导出导入、审计、Forget、检查点 |
+| **分得清楚** | 可信 Runtime 身份、能力令牌（Capability）校验、账号 / Agent / 记忆空间隔离 |
+| **管得住** | 保留期、隐私设置、清除历史 / 全部、JSON 导出导入、审计、遗忘（Forget）、检查点 |
 | **接得上** | Python 同步/异步 SDK、CLI、MCP、Runtime Bridge，以及 Hermes、DeepSeek Harness、BiBit 适配器 |
 
 几个容易混淆的点，先划重点：
@@ -74,7 +77,7 @@
 | `crates/memoryd` | `bianbu-agent-memoryd` 守护进程，UDS 服务与 D-Bus 控制面 |
 | `sdk/python` | Python SDK、CLI、MCP 服务、Runtime Bridge、BiBit Adapter |
 | `adapters/hermes` | Hermes v0.21.7 的外部记忆 Provider |
-| `adapters/deepseek-harness` | DeepSeek Harness 0.1.0-rc.6 的 Cordis 插件与 Python Bridge |
+| `adapters/deepseek-harness` | DeepSeek Harness 0.1.0-rc.6 的 Cordis 插件（宿主生命周期框架）与 Python Bridge |
 | `packaging` | systemd 单元、启动脚本、D-Bus 策略 |
 | `debian` | Debian 打包元数据 |
 | `migrations` | 数据库 Schema 迁移 |
@@ -211,7 +214,7 @@ cp /path/to/bianbu-agent-memory/adapters/hermes/__init__.py \
 | Hermes 的时机 | 记忆模块的动作 |
 | --- | --- |
 | `initialize` | 握手、确认不可变身份 |
-| `system_prompt_block` | 提供当前生效的 Instruction Memory |
+| `system_prompt_block` | 提供当前生效的指令记忆（Instruction Memory） |
 | `prefetch` | 召回相关记忆；当前查询缓存未命中最多等 2 秒，超时返回空 |
 | `sync_turn` | 一轮完成后自动写入事件、抽取、摘要/检查点 |
 | `on_memory_write(add/replace/remove)` | 显式保存、版本校验更新、待确认删除 |
@@ -219,7 +222,7 @@ cp /path/to/bianbu-agent-memory/adapters/hermes/__init__.py \
 | `on_session_switch` | 切换会话并让旧缓存失效 |
 | `shutdown` | 停止接收、排空队列、关闭连接 |
 
-它用的是有界进程内队列，不是持久化 Outbox；进程退出时未完成的工作可能丢失。
+它用的是有界进程内队列，不是持久化重试队列；进程退出时未完成的工作可能丢失。
 
 ## 对接 DeepSeek Harness
 
@@ -233,7 +236,7 @@ DeepSeek Harness 这边是一个 **Cordis 插件 + 一个小型 Python Bridge**�
 - `adapters/deepseek-harness/bridge.py`：JSON-lines 桥，替插件连接记忆服务；
 - `adapters/deepseek-harness/acceptance.mjs`：验收脚本。
 
-在宿主 Profile 里配置插件的 `python`、`bridge`、`state`，需要指定 SDK 时再加
+在宿主配置（host profile）里配置插件的 `python`、`bridge`、`state`，需要指定 SDK 时再加
 `sdk`。状态目录放在仓库外面，别把数据库、密钥或日志提交进来。
 
 ### 模型能用到哪些工具？
@@ -252,8 +255,9 @@ DeepSeek Harness 这边是一个 **Cordis 插件 + 一个小型 Python Bridge**�
 
 - **Embedding 检索**：词法 + 向量融合，服务挂了或超时自动回退词法，
   按需启用，不需要改基础存储；
-- **Mem0 / D+ 投影**：可重建的语义索引，不替代权威存储，
-  安装命令为 `python -m pip install -e 'sdk/python[dplus]'`；
+- **Mem0 语义投影（`dplus` 可选依赖）**：用官方 Mem0 + 本地 Qdrant 维护的
+  可重建语义索引，不替代权威存储；安装命令为
+  `python -m pip install -e 'sdk/python[dplus]'`；
 - **模型摘要**：按需接入，不影响基础记忆与检索。
 
 ## 开发与测试

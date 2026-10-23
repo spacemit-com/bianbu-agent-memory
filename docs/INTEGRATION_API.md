@@ -36,7 +36,7 @@ BiBit 设置页 / 外部 Agent / Runtime Hook 或 Tool
 - Memory SDK 负责客户端协议、参数编码、重连和类型转换。
 - memoryd 负责身份校验、Capability、命名空间隔离、校验、事务、审计和持久化。
 - SQLite 是权威数据源；FTS/向量索引属于可重建派生数据。
-- 云备份已于 2026-10-16 下线，本服务不生成、上传或恢复 Capsule；本地备份/恢复走
+- 云备份已于 2026-10-16 下线，本服务不生成、上传或恢复云端备份包；本地备份/恢复走
   `privacy.export_data` / `privacy.import_data`，导出文档带命名空间 `scope`，导入要求
   与当前 account/agent/space 一致。
 - Memory 不承载社区知识库、文件全盘检索或命令执行预览；这些由 BiBit/Agent OS
@@ -124,7 +124,7 @@ daemon。普通 shell 直接连接生产 socket 会返回
 | `client.privacy.clear_history(...)` | `privacy.clear_history` | 清除会话历史（需确认） |
 | `client.privacy.clear_all(...)` | `privacy.clear_all` | 清除全部记忆（需确认） |
 | `client.runtime.prepare_checkpoint(...)` | `runtime.prepare_checkpoint` | 创建记忆水位检查点 |
-| `client.runtime.restore_checkpoint(...)` | `runtime.restore_checkpoint` | 统计检查点之后的事件/outbox 变化 |
+| `client.runtime.restore_checkpoint(...)` | `runtime.restore_checkpoint` | 统计检查点之后的事件与待同步队列变化 |
 
 异步代码使用 `AsyncMemoryClient`，方法名称和参数一致。
 

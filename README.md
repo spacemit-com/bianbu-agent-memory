@@ -47,6 +47,9 @@ In one sentence each:
 - **Indexes guess what you mean**: FTS5 is the baseline; Embedding and Mem0 are
   optional extras.
 
+> Naming: Runtime means Bianbu Agent Runtime, the on-device agent runtime;
+> Runtime Bridge is the in-process bridge it uses to call the memory service.
+
 Indexes are always derived data. A semantic hit is resolved back to the current
 canonical record before its text is returned, so vector-store text is never
 injected straight into the model context.
@@ -86,7 +89,7 @@ A few things worth pinning up:
 | `crates/memoryd` | The `bianbu-agent-memoryd` daemon, UDS server, and D-Bus control plane |
 | `sdk/python` | Python SDK, CLI, MCP server, Runtime Bridge, BiBit adapter |
 | `adapters/hermes` | External memory provider for Hermes v0.21.7 |
-| `adapters/deepseek-harness` | Cordis plugin and Python bridge for DeepSeek Harness 0.1.0-rc.6 |
+| `adapters/deepseek-harness` | Cordis plugin (host lifecycle framework) and Python bridge for DeepSeek Harness 0.1.0-rc.6 |
 | `packaging` | systemd units, launch scripts, D-Bus policy |
 | `debian` | Debian packaging metadata |
 | `migrations` | Database schema migrations |
@@ -236,7 +239,7 @@ Two things to remember:
 | Hermes hook | What the memory module does |
 | --- | --- |
 | `initialize` | Handshake and immutable identity |
-| `system_prompt_block` | Supply the effective Instruction Memory |
+| `system_prompt_block` | Supply the effective instruction memory |
 | `prefetch` | Recall relevant memory; a cache miss waits at most 2 seconds, then returns empty |
 | `sync_turn` | After a completed turn, write events, extract, and store summary/checkpoint |
 | `on_memory_write(add/replace/remove)` | Explicit save, revision-checked update, pending-confirmation removal |
@@ -244,7 +247,7 @@ Two things to remember:
 | `on_session_switch` | Switch sessions and invalidate stale caches |
 | `shutdown` | Stop intake, drain the queue, close connections |
 
-The queue is bounded and in-process; it is not a durable outbox, so unfinished
+The queue is bounded and in-process; it is not a durable retry queue, so unfinished
 work may be lost when the process exits.
 
 ## Integrating DeepSeek Harness
@@ -282,7 +285,8 @@ plugin-origin messages are excluded from writes; subagents are read-only.
 
 - **Embedding recall**: lexical + vector fusion with lexical fallback on error
   or timeout; enable it without changing authoritative storage.
-- **Mem0 / D+ projection**: a rebuildable semantic index that never replaces
+- **Mem0 semantic projection (`dplus` extra)**: a rebuildable semantic index
+  backed by official Mem0 and a local Qdrant, and it never replaces
   authoritative storage. Install with
   `python -m pip install -e 'sdk/python[dplus]'`.
 - **Model summaries**: an optional add-on that does not affect baseline memory

@@ -42,7 +42,7 @@ BiBit settings page / external Agent / Runtime Hook or Tool
   transactions, audit, and persistence.
 - SQLite is the authoritative source; FTS/vector indexes are rebuildable derived data.
 - Cloud backup was retired on 2026-10-16. This service does not create, upload, or
-  restore Capsules. Local backup/restore uses `privacy.export_data` /
+  restore cloud backup packages. Local backup/restore uses `privacy.export_data` /
   `privacy.import_data`; the exported document carries a namespace `scope`, and import
   requires the current account/agent/space to match.
 - Memory does not own the community knowledge base, whole-disk file search, or command
@@ -135,7 +135,7 @@ Common APIs:
 | `client.privacy.clear_history(...)` | `privacy.clear_history` | Clear session history (confirmation required) |
 | `client.privacy.clear_all(...)` | `privacy.clear_all` | Clear all memory (confirmation required) |
 | `client.runtime.prepare_checkpoint(...)` | `runtime.prepare_checkpoint` | Create a memory watermark checkpoint |
-| `client.runtime.restore_checkpoint(...)` | `runtime.restore_checkpoint` | Count events/outbox changes after a checkpoint |
+| `client.runtime.restore_checkpoint(...)` | `runtime.restore_checkpoint` | Count events and pending-sync queue changes after a checkpoint |
 
 For asynchronous code use `AsyncMemoryClient`; method names and parameters match the
 synchronous client.

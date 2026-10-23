@@ -178,9 +178,8 @@ and `--backup-api-key-*`; the unit shipped by the package no longer passes them.
 also no longer creates `/var/lib/bianbu-agent-memory/capsules` or
 `/etc/bianbu-agent-memory/capsule-key`. If an old unit or drop-in on the system still
 passes those arguments, memoryd fails to start on the unknown option, so replace it
-with the current unit during upgrade. The cloud-backup implementation remains on the
-`feature/mem-l4-cloud-backup` branch and will not enter main before integration
-testing.
+with the current unit during upgrade. The cloud-backup implementation is not part of
+this branch, and this release exposes no cloud-backup entry points.
 
 The keys `cloud_backup_enabled`, `backup_frequency`, `backup_scopes`, and
 `max_backup_bytes` written by older versions are **discarded** when the configuration

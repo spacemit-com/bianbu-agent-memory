@@ -164,7 +164,7 @@ spacemit-ai-gateway 的 Embed 域；gateway 或模型不可用时自动降级为
 它们。本包同样不再创建 `/var/lib/bianbu-agent-memory/capsules` 和
 `/etc/bianbu-agent-memory/capsule-key`。如果系统中残留旧版 unit 或 drop-in 仍带这
 些参数，memoryd 会因未知参数启动失败，升级时需同步替换为当前 unit。云备份实现
-保留在特性分支 `feature/mem-l4-cloud-backup`，未联调前不进入 main。
+不在本分支，当前版本也不提供相关入口。
 
 `memory.config.json` 中由旧版本写入的 `cloud_backup_enabled`、
 `backup_frequency`、`backup_scopes`、`max_backup_bytes` 在读取时被**丢弃**、
