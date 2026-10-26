@@ -736,6 +736,8 @@ impl Store {
             ));
         }
 
+        let trace_request = crate::embedding::cache_trace();
+        let handler_started = std::time::Instant::now();
         let result = match request.method.as_str() {
             "account.status" => self.account_status(identity),
             "account.begin_login" | "account.complete_login" | "account.logout" => {
@@ -824,8 +826,19 @@ impl Store {
             "system.stats" => self.stats(identity),
             _ => Err(ServiceError::new("NotFound", "unknown protocol method")),
         };
+        let handler_us = handler_started.elapsed().as_micros();
+        let audit_started = std::time::Instant::now();
         if result.is_ok() && is_audited_read(&request.method) {
             self.audit_access(identity, request, "memory_read", "success", None);
+        }
+        if trace_request {
+            eprintln!(
+                "[request-trace] id={} method={} handler_us={} audit_us={}",
+                request.request_id,
+                request.method,
+                handler_us,
+                audit_started.elapsed().as_micros()
+            );
         }
         result
     }
@@ -1205,6 +1218,14 @@ impl Store {
         result: &str,
         required_capability: Option<&str>,
     ) {
+        // Reads are not read-only at the protocol boundary: their audit row
+        // is persisted before the response. Share the writer admission lock
+        // with with_write instead of letting every reader contend inside
+        // SQLite's busy handler (whose retry sleeps amplify the tail).
+        // Acquire before checkout so waiting readers pin no SQLCipher cache.
+        let Ok(_write_guard) = self.write_lock.lock() else {
+            return;
+        };
         let Ok(connection) = self.connection() else {
             return;
         };

@@ -56,6 +56,46 @@ fn wait_for_settle_window() {
 }
 
 #[test]
+fn concurrent_reads_keep_each_audit_durable_alongside_writes() {
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("memory.db");
+    let store = Arc::new(Store::open(&database).unwrap());
+    let barrier = Arc::new(std::sync::Barrier::new(9));
+    let mut workers = Vec::new();
+    for worker in 0..8 {
+        let store = Arc::clone(&store);
+        let barrier = Arc::clone(&barrier);
+        let database = database.clone();
+        workers.push(thread::spawn(move || {
+            barrier.wait();
+            for index in 0..16 {
+                let mut read = request("privacy.settings.get", json!({}), "read-audit");
+                read.trace_id = format!("concurrent-read:{worker}:{index}");
+                store.handle(&identity(), &read, false).unwrap();
+                // A successful read must already have a durable audit, not
+                // merely have queued one for a later background flush.
+                let connection = Connection::open(&database).unwrap();
+                let count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM audit_spool WHERE trace_id=?1 AND event_type='memory_read'",
+                    [&read.trace_id], |row| row.get(0),
+                ).unwrap();
+                assert_eq!(count, 1);
+            }
+        }));
+    }
+    barrier.wait();
+    for index in 0..16 {
+        store.handle(&identity(), &request(
+            "long_term.put", json!({"kind":"fact","text":format!("audit writer {index}"),"sync_policy":"local_only"}),
+            &format!("audit-writer:{index}"),
+        ), false).unwrap();
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
 fn concurrent_writes_are_serialized_without_sqlite_busy_errors() {
     let directory = TempDir::new().unwrap();
     let store = Arc::new(Store::open(directory.path().join("memory.db")).unwrap());

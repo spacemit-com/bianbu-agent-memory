@@ -740,7 +740,7 @@ impl SemanticEntry {
 /// Immutable namespace snapshot published behind an `Arc` so concurrent
 /// scans share one allocation and a reload is just a pointer swap.
 struct SemanticSnapshot {
-    /// Sorted by memory_id (the table's primary key order).
+    /// Storage order is irrelevant: scoring applies its own deterministic ranking.
     entries: Vec<SemanticEntry>,
     heap_bytes: usize,
 }
@@ -851,7 +851,8 @@ impl SemanticIndexCache {
         }
     }
 
-    /// Fetch the namespace's embedding rows in primary-key order. Fails with
+    /// Fetch the namespace's embedding rows without sorting their vector payloads.
+    /// `scan_entries` ranks by score and id regardless of row order. Fails with
     /// [`SnapshotLoadFailure::Oversized`] once the row cap is exceeded (the
     /// count itself is the cap check — the watermark probe no longer carries
     /// a COUNT, see [`Self::watermark`]), and with `Error` for transient
@@ -864,8 +865,7 @@ impl SemanticIndexCache {
         let mut statement = match connection.prepare(
             "SELECT memory_id,revision,kind,dims,format,norm,model,vector
              FROM memory_embeddings
-             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3
-             ORDER BY memory_id",
+             WHERE account_id=?1 AND agent_id=?2 AND memory_space_id=?3",
         ) {
             Ok(statement) => statement,
             Err(error) => {
@@ -1351,8 +1351,9 @@ impl Store {
     /// means it was attempted and failed (timeout, service down, scan or
     /// header error) so the lexical cascade is only the MEM-NFR-02 keyword
     /// fallback, and `Computed` carries the headers to fuse.
-    /// The per-request timeout is clamped to 1500ms so the whole search
-    /// stays inside the 2s budget after the lexical stage has run.
+    /// Embedding socket operations are capped at 1500ms to leave room in the
+    /// 2s target. This is not an end-to-end deadline: admission, lexical
+    /// retrieval, vector-cache loading/scanning and audit also take time.
     pub(crate) fn semantic_stage(
         &self,
         identity: &MemoryIdentity,
@@ -1378,7 +1379,16 @@ impl Store {
         let stage_started = std::time::Instant::now();
         let vectors = match client.embed_texts(&[query_text.as_str()], config.embedding.dims) {
             Ok(vectors) => vectors,
-            Err(_) => return SemanticStage::Degraded,
+            Err(error) => {
+                if trace_stages {
+                    eprintln!(
+                        "[semantic-trace] degraded stage=embed elapsed_ms={} reason={}",
+                        stage_started.elapsed().as_millis(),
+                        error.message()
+                    );
+                }
+                return SemanticStage::Degraded;
+            }
         };
         if trace_stages {
             eprintln!(
@@ -2039,7 +2049,7 @@ mod tests {
             revision: 1,
             vector,
         };
-        let entries = vec![
+        let mut entries = vec![
             entry("a", "fact", "m", 4, orthogonal.clone(), orthogonal_norm),
             entry("b", "preference", "m", 4, aligned.clone(), aligned_norm),
             // Different model: filtered like the SQL scan's e.model=?.
@@ -2078,6 +2088,21 @@ mod tests {
         let ranked = scan_entries(&negatives, &query, query_norm, &BTreeSet::new(), "m", 1);
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].0, "g");
+        // Cache loading must not need SQL ORDER BY: every rotation, including
+        // reversed tie arrival, produces the same bounded ranking and scores.
+        for limit in 1..=6 {
+            let expected = scan_entries(
+                &entries, &query, query_norm, &BTreeSet::new(), "m", limit,
+            );
+            entries.reverse();
+            for _ in 0..entries.len() {
+                assert_eq!(
+                    scan_entries(&entries, &query, query_norm, &BTreeSet::new(), "m", limit),
+                    expected
+                );
+                entries.rotate_left(1);
+            }
+        }
     }
 
     #[test]

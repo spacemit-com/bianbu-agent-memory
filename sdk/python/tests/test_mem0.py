@@ -67,7 +67,7 @@ def test_rule_planner_keeps_the_preference_a_name_declaration_bundles() -> None:
     declaration short-circuited the whole sentence.  A slot *replace* already
     preserved the residual (see ontology.slot_residual); adding the slot record
     has to keep it too, or the communication-style half is dropped before it can
-    ever be written -- which is exactly what the user saw on 10.0.91.67.
+    ever be written -- which is exactly what the user saw on 192.0.2.12.
     """
 
     planner = RuleBasedMem0Planner()
@@ -636,7 +636,7 @@ def test_chinese_development_habit_is_extracted_and_updates_same_topic() -> None
 
 
 def test_slot_replace_preserves_the_text_the_slot_cannot_hold() -> None:
-    """K3 (10.0.91.67) 2026-09-24 09:57: the automatic name extraction replaced a slot
+    """K3 (192.0.2.12) 2026-09-24 09:57: the automatic name extraction replaced a slot
     record that also held a communication-style preference.  The replace may take the
     slot value, but the preference has to survive as its own plain memory.
     """

@@ -168,7 +168,7 @@ def test_a_predicate_after_the_declaration_does_not_take_the_name_slot(
     assert preference_slot(text) is None
 
 
-#: K3 (10.0.91.67) 2026-09-24 09:57: 写入侧把"自称 + 说话风格偏好"合成一条记忆，
+#: K3 (192.0.2.12) 2026-09-24 09:57: 写入侧把"自称 + 说话风格偏好"合成一条记忆，
 #: 分类把整句贴上了 `slot:profile.user_name`；4 秒后自动抽取把同槽位值改成
 #: "我是百岁太奶"，整段文本被替换，偏好随之消失（同 id，revision 1→2）。
 _SLOTTED_NAME_PLUS_PREFERENCE = (

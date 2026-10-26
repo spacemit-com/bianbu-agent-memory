@@ -1,0 +1,439 @@
+{
+  "device": "192.0.2.11",
+  "corpus_records": 100000,
+  "stored_vectors": "synthetic; real Gateway query embeddings",
+  "retrieval": {
+    "hot": {
+      "gated": {
+        "warmup_ops": 5,
+        "warmup_excluded": {
+          "count": 80,
+          "p50_ms": 878.917,
+          "p95_ms": 5724.154,
+          "p99_ms": 5982.116,
+          "max_ms": 5982.116
+        },
+        "search_headers": {
+          "count": 3120,
+          "p50_ms": 22.805,
+          "p95_ms": 41.862,
+          "p99_ms": 809.573,
+          "max_ms": 1053.196
+        },
+        "get_many": {
+          "count": 3120,
+          "p50_ms": 25.345,
+          "p95_ms": 43.749,
+          "p99_ms": 60.982,
+          "max_ms": 146.008
+        },
+        "search_plus_read": {
+          "count": 3120,
+          "p50_ms": 48.214,
+          "p95_ms": 77.48,
+          "p99_ms": 836.771,
+          "max_ms": 1074.636
+        }
+      },
+      "errors": 0,
+      "status": "pass"
+    },
+    "cold": {
+      "gated": {
+        "warmup_ops": 5,
+        "warmup_excluded": {
+          "count": 80,
+          "p50_ms": 872.053,
+          "p95_ms": 5283.249,
+          "p99_ms": 5576.998,
+          "max_ms": 5576.998
+        },
+        "search_headers": {
+          "count": 3120,
+          "p50_ms": 23.003,
+          "p95_ms": 43.552,
+          "p99_ms": 454.18,
+          "max_ms": 1086.802
+        },
+        "get_many": {
+          "count": 3120,
+          "p50_ms": 25.689,
+          "p95_ms": 46.231,
+          "p99_ms": 66.019,
+          "max_ms": 380.955
+        },
+        "search_plus_read": {
+          "count": 3120,
+          "p50_ms": 48.848,
+          "p95_ms": 87.36,
+          "p99_ms": 490.463,
+          "max_ms": 1116.932
+        }
+      },
+      "errors": 0,
+      "status": "pass"
+    }
+  },
+  "semantic": {
+    "hot": {
+      "clients": 8,
+      "ops_per_client": 400,
+      "top_k": 10,
+      "elapsed_s": 203.8,
+      "search_headers": {
+        "count": 3200,
+        "p50_ms": 493.517,
+        "p95_ms": 562.542,
+        "p99_ms": 654.46,
+        "max_ms": 827.613
+      },
+      "get_many": {
+        "count": 3200,
+        "p50_ms": 7.951,
+        "p95_ms": 14.738,
+        "p99_ms": 20.872,
+        "max_ms": 187.637
+      },
+      "search_plus_read": {
+        "count": 3200,
+        "p50_ms": 502.052,
+        "p95_ms": 571.488,
+        "p99_ms": 669.364,
+        "max_ms": 869.339
+      },
+      "errors": [],
+      "error_count": 0,
+      "latency_gate_pass": true
+    },
+    "cold": {
+      "clients": 8,
+      "ops_per_client": 400,
+      "top_k": 10,
+      "elapsed_s": 202.0,
+      "search_headers": {
+        "count": 3200,
+        "p50_ms": 491.561,
+        "p95_ms": 555.709,
+        "p99_ms": 651.347,
+        "max_ms": 889.212
+      },
+      "get_many": {
+        "count": 3200,
+        "p50_ms": 8.132,
+        "p95_ms": 15.629,
+        "p99_ms": 23.146,
+        "max_ms": 210.358
+      },
+      "search_plus_read": {
+        "count": 3200,
+        "p50_ms": 500.424,
+        "p95_ms": 567.85,
+        "p99_ms": 678.941,
+        "max_ms": 903.605
+      },
+      "errors": [],
+      "error_count": 0,
+      "latency_gate_pass": true
+    },
+    "hot_computed": 3201,
+    "cold_computed": 3201,
+    "hot_degraded": 0,
+    "cold_degraded": 0,
+    "hot_first_search_ms": 1970.951,
+    "cold_first_search_ms": 2219.182
+  },
+  "write": {
+    "write_ack": {
+      "count": 1000,
+      "p50_ms": 53.341,
+      "p95_ms": 59.914,
+      "p99_ms": 68.208,
+      "max_ms": 308.632
+    },
+    "write_ack_pass": true,
+    "outage_search_ms": 13.264385052025318,
+    "outage_returned": true,
+    "recovery_returned": true,
+    "health_after": {
+      "audit_export": "local_json",
+      "database": "busy",
+      "database_check": {
+        "age_ms": null,
+        "attempts": 0,
+        "checked_at_ms": null,
+        "complaint": null,
+        "interval_ms": 30000,
+        "reason": "recent-activity",
+        "state": "busy",
+        "verdict": null
+      },
+      "embedding": {
+        "base_url": "http://127.0.0.1:18790/v1/embed",
+        "config_file_matches": true,
+        "dims": 1024,
+        "enabled": true,
+        "model": "qwen3-embedding-0.6b-q8_0"
+      },
+      "schema_version": 14,
+      "status": "unknown",
+      "storage": {
+        "database_bytes": 8380616,
+        "database_limit_bytes": 2147483648,
+        "free_bytes": 10272772096,
+        "minimum_free_bytes": 0,
+        "within_limits": true
+      },
+      "storage_encryption": "sqlcipher"
+    }
+  },
+  "ipc_health_roundtrip": {
+    "count": 3000,
+    "p50_ms": 0.317,
+    "p95_ms": 0.338,
+    "p99_ms": 0.37,
+    "max_ms": 0.916,
+    "p95_within_5ms": true
+  },
+  "stability32": {
+    "hot": {
+      "clients": 32,
+      "ops_per_client": 50,
+      "top_k": 10,
+      "elapsed_s": 16.6,
+      "search_headers": {
+        "count": 1600,
+        "p50_ms": 47.848,
+        "p95_ms": 1758.309,
+        "p99_ms": 5130.615,
+        "max_ms": 6090.338
+      },
+      "get_many": {
+        "count": 1600,
+        "p50_ms": 49.602,
+        "p95_ms": 121.853,
+        "p99_ms": 168.95,
+        "max_ms": 299.682
+      },
+      "search_plus_read": {
+        "count": 1600,
+        "p50_ms": 100.819,
+        "p95_ms": 1777.146,
+        "p99_ms": 5155.415,
+        "max_ms": 6100.357
+      },
+      "gated": {
+        "warmup_ops": 5,
+        "warmup_excluded": {
+          "count": 160,
+          "p50_ms": 1744.382,
+          "p95_ms": 5620.251,
+          "p99_ms": 6024.024,
+          "max_ms": 6100.357
+        },
+        "search_headers": {
+          "count": 1440,
+          "p50_ms": 47.599,
+          "p95_ms": 137.819,
+          "p99_ms": 1812.809,
+          "max_ms": 2647.791
+        },
+        "get_many": {
+          "count": 1440,
+          "p50_ms": 50.348,
+          "p95_ms": 124.455,
+          "p99_ms": 176.61,
+          "max_ms": 299.682
+        },
+        "search_plus_read": {
+          "count": 1440,
+          "p50_ms": 99.1,
+          "p95_ms": 266.905,
+          "p99_ms": 1858.717,
+          "max_ms": 2799.809
+        }
+      },
+      "errors": [],
+      "error_count": 0
+    },
+    "cold": {
+      "clients": 32,
+      "ops_per_client": 50,
+      "top_k": 10,
+      "elapsed_s": 17.5,
+      "search_headers": {
+        "count": 1600,
+        "p50_ms": 46.958,
+        "p95_ms": 1854.495,
+        "p99_ms": 5046.844,
+        "max_ms": 5947.755
+      },
+      "get_many": {
+        "count": 1600,
+        "p50_ms": 48.561,
+        "p95_ms": 98.141,
+        "p99_ms": 179.268,
+        "max_ms": 301.918
+      },
+      "search_plus_read": {
+        "count": 1600,
+        "p50_ms": 97.147,
+        "p95_ms": 1884.05,
+        "p99_ms": 5057.445,
+        "max_ms": 5958.606
+      },
+      "gated": {
+        "warmup_ops": 5,
+        "warmup_excluded": {
+          "count": 160,
+          "p50_ms": 1787.987,
+          "p95_ms": 5464.881,
+          "p99_ms": 5895.5,
+          "max_ms": 5958.606
+        },
+        "search_headers": {
+          "count": 1440,
+          "p50_ms": 46.75,
+          "p95_ms": 253.826,
+          "p99_ms": 1908.223,
+          "max_ms": 2116.146
+        },
+        "get_many": {
+          "count": 1440,
+          "p50_ms": 49.169,
+          "p95_ms": 102.772,
+          "p99_ms": 183.3,
+          "max_ms": 301.918
+        },
+        "search_plus_read": {
+          "count": 1440,
+          "p50_ms": 96.638,
+          "p95_ms": 365.53,
+          "p99_ms": 1967.681,
+          "max_ms": 2248.832
+        }
+      },
+      "errors": [],
+      "error_count": 0
+    }
+  },
+  "runtime_chat": {
+    "completed": true,
+    "hooks": [
+      {
+        "label": "hi",
+        "session_id": "codex-formal-final-performance-20261023-f7420ac4",
+        "run_id": "f5ee4823-56a9-4ff7-8a19-7ecbc2c3e837",
+        "hooks": [
+          {
+            "invocation_id": "9e231df362cc4c5b883da85ddaf37f74",
+            "hook_id": "bianbu.memory/memory.before_run",
+            "plugin_id": "bianbu.memory",
+            "point": "before_run",
+            "status": "completed",
+            "duration_ms": 418.98685321211815
+          },
+          {
+            "invocation_id": "034526d297844e45800393fa4f163ba6",
+            "hook_id": "bianbu.memory/memory.after_run",
+            "plugin_id": "bianbu.memory",
+            "point": "after_run",
+            "status": "completed",
+            "duration_ms": 367.8318769671023
+          }
+        ]
+      },
+      {
+        "label": "short",
+        "session_id": "codex-formal-final-performance-20261023-f7420ac4",
+        "run_id": "0e606395-9962-4e84-9037-3d53c404af57",
+        "hooks": [
+          {
+            "invocation_id": "1bd9f74606ee46e7be4f7588487ff812",
+            "hook_id": "bianbu.memory/memory.before_run",
+            "plugin_id": "bianbu.memory",
+            "point": "before_run",
+            "status": "completed",
+            "duration_ms": 150.87617002427578
+          },
+          {
+            "invocation_id": "9d658aa4812f4d6c8eb1d55c9711704f",
+            "hook_id": "bianbu.memory/memory.after_run",
+            "plugin_id": "bianbu.memory",
+            "point": "after_run",
+            "status": "completed",
+            "duration_ms": 18.40861514210701
+          }
+        ]
+      },
+      {
+        "label": "followup",
+        "session_id": "codex-formal-final-performance-20261023-f7420ac4",
+        "run_id": "5f9910c4-3eeb-4cc8-8e5f-0bac646c3d9d",
+        "hooks": [
+          {
+            "invocation_id": "e2d7d3ce31e44e00af880de8eb2ceb0a",
+            "hook_id": "bianbu.memory/memory.before_run",
+            "plugin_id": "bianbu.memory",
+            "point": "before_run",
+            "status": "completed",
+            "duration_ms": 136.73697086051106
+          },
+          {
+            "invocation_id": "8890348a9a58442ba2f86cb52812d182",
+            "hook_id": "bianbu.memory/memory.after_run",
+            "plugin_id": "bianbu.memory",
+            "point": "after_run",
+            "status": "completed",
+            "duration_ms": 19.708427134901285
+          }
+        ]
+      },
+      {
+        "label": "business",
+        "session_id": "codex-formal-final-performance-20261023-f7420ac4",
+        "run_id": "776e5c5d-42ee-49ad-803c-6595eb599ec5",
+        "hooks": [
+          {
+            "invocation_id": "e7aafba9c66b4906a9e58b4a5904057c",
+            "hook_id": "bianbu.memory/memory.before_run",
+            "plugin_id": "bianbu.memory",
+            "point": "before_run",
+            "status": "completed",
+            "duration_ms": 160.65277438610792
+          },
+          {
+            "invocation_id": "09f55af85e1d4ce1943b47cd0b6de1f3",
+            "hook_id": "bianbu.memory/memory.after_run",
+            "plugin_id": "bianbu.memory",
+            "point": "after_run",
+            "status": "completed",
+            "duration_ms": 20.735501777380705
+          }
+        ]
+      }
+    ]
+  },
+  "gateway_restored": {
+    "pid": 1052042,
+    "proxy_source": "/opt/spacemit-ai-gateway/venv/lib/python3.14/site-packages/spacemit_ai_gateway/domains/embed/adapters/llama.py",
+    "client_init_source": "/opt/spacemit-ai-gateway/venv/lib/python3.14/site-packages/httpx/_client.py",
+    "client_send_source": "/opt/spacemit-ai-gateway/venv/lib/python3.14/site-packages/httpx/_client.py",
+    "service_source": "/opt/spacemit-ai-gateway/venv/lib/python3.14/site-packages/spacemit_ai_gateway/common/base_service.py",
+    "diagnostic_gc_callbacks": [],
+    "restored": true
+  },
+  "gateway_tests": {
+    "passed": 263,
+    "warnings": 2
+  },
+  "invalid_experiments": [
+    "original cold semantic overlapped write/fallback test",
+    "original write/fallback test overlapped semantic and included explicit process pause"
+  ],
+  "limits": [
+    "P95 gates only; restarted first semantic request 2219.182ms",
+    "health RTT is not pure IPC overhead",
+    "not semantic accuracy or long duration acceptance",
+    "no new deb package validated"
+  ]
+}
