@@ -2612,6 +2612,7 @@ pub(crate) fn validate_summary_patch(value: &Value) -> ServiceResult<()> {
     let allowed = [
         "current_status",
         "key_decisions",
+        "decisions",
         "open_questions",
         "next_steps",
         "files_resources_touched",
@@ -2620,6 +2621,9 @@ pub(crate) fn validate_summary_patch(value: &Value) -> ServiceResult<()> {
         "errors_encountered",
         "user_preferences",
         "context_pointers",
+        "salient_facts",
+        "unresolved_tasks",
+        "fact_source_sequences",
     ];
     if object.is_empty() {
         return Err(ServiceError::invalid("summary patch must not be empty"));
@@ -2630,7 +2634,19 @@ pub(crate) fn validate_summary_patch(value: &Value) -> ServiceResult<()> {
                 "unknown summary field: {key}"
             )));
         }
-        if key == "current_status" {
+        if key == "fact_source_sequences" {
+            let Some(sources) = value.as_object() else {
+                return Err(ServiceError::invalid("fact_source_sequences must be an object"));
+            };
+            for (field, sequences) in sources {
+                if !allowed.contains(&field.as_str()) || field == "fact_source_sequences"
+                    || !sequences.as_array().is_some_and(|items| items.len() <= 100
+                        && items.iter().all(|item| item.as_i64().is_some_and(|n| n >= 0)))
+                {
+                    return Err(ServiceError::invalid("invalid summary source sequences"));
+                }
+            }
+        } else if key == "current_status" {
             if !value.as_str().is_some_and(|text| text.len() <= 8_192) {
                 return Err(ServiceError::invalid("current_status must be a string"));
             }

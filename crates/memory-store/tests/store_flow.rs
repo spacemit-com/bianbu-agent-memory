@@ -1154,6 +1154,7 @@ fn natural_language_questions_use_lexical_recall_fallback() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("memory.db")).unwrap();
     let identity = identity();
+    disable_embedding_for_lexical_test(&store, &identity);
     let receipt = store
         .handle(
             &identity,
@@ -1264,11 +1265,28 @@ fn fts2_terms(database: &std::path::Path, memory_id: &str) -> String {
         .unwrap()
 }
 
+// These tests assert lexical candidate membership and coverage scores, not
+// hybrid retrieval. The production default enables the device Gateway; letting
+// it participate makes the tests depend on model availability and RRF scores.
+// Semantic and hybrid behavior are covered separately with fake embedding servers.
+fn disable_embedding_for_lexical_test(store: &Store, owner: &MemoryIdentity) {
+    store.handle(
+        owner,
+        &request(
+            "privacy.settings.update",
+            json!({"embedding":{"enabled":false}}),
+            "lexical-test-disable-embedding",
+        ),
+        false,
+    ).unwrap();
+}
+
 #[test]
 fn bigram_index_serves_two_char_cjk_queries() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("memory.db")).unwrap();
     let owner = identity();
+    disable_embedding_for_lexical_test(&store, &owner);
     let terminal = put_memory(
         &store,
         &owner,
@@ -1305,6 +1323,7 @@ fn bigram_index_is_maintained_across_put_revise_forget_and_respects_secrets() {
     let database = directory.path().join("memory.db");
     let store = Store::open(&database).unwrap();
     let owner = identity();
+    disable_embedding_for_lexical_test(&store, &owner);
     let memory = put_memory(
         &store,
         &owner,
@@ -1417,6 +1436,7 @@ fn cross_run_adjacency_ranks_below_true_substring_matches() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("memory.db")).unwrap();
     let owner = identity();
+    disable_embedding_for_lexical_test(&store, &owner);
     let exact = put_memory(&store, &owner, "存储层架构说明文档", "bigram-adjacency-exact");
     let adjacent = put_memory(
         &store,
@@ -1463,6 +1483,7 @@ fn long_cjk_run_queries_match_by_trigram_windows() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("memory.db")).unwrap();
     let owner = identity();
+    disable_embedding_for_lexical_test(&store, &owner);
     let toll = put_memory(
         &store,
         &owner,
@@ -1506,6 +1527,7 @@ fn rare_ascii_run_matches_survive_dense_run_crowding() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("memory.db")).unwrap();
     let owner = identity();
+    disable_embedding_for_lexical_test(&store, &owner);
     let rare = put_memory(
         &store,
         &owner,
@@ -4936,9 +4958,10 @@ fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
             &request(
                 "long_term.put",
                 json!({
-                    "kind":"preference",
+                    "kind":"profile",
                     "text":"We build with ninja on the K3 board",
                     "tags":["important"],
+                    "sensitivity":"private",
                     "sync_policy":"local_only"
                 }),
                 "import-memory",
@@ -4956,7 +4979,9 @@ fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
                 "sessions.update_summary",
                 json!({
                     "session_id":"session-import",
-                    "patch":{"current_status":"imported"},
+                    "patch":{"current_status":"imported", "decisions":[],
+                        "salient_facts":["ninja"], "unresolved_tasks":[],
+                        "fact_source_sequences":{"salient_facts":[1]}},
                     "source_event_sequence":1,
                     "expected_revision":0
                 }),
@@ -4966,7 +4991,7 @@ fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
         )
         .unwrap();
 
-    let exported = store
+    let mut exported = store
         .handle(
             &owner,
             &request(
@@ -4980,6 +5005,8 @@ fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
     assert_eq!(exported["session_events"].as_array().unwrap().len(), 1);
     assert_eq!(exported["session_summaries"].as_array().unwrap().len(), 1);
     assert_eq!(exported["long_term_memories"].as_array().unwrap().len(), 1);
+    // A backup can contain a summary that has already been updated repeatedly.
+    exported["session_summaries"][0]["revision"] = json!(7);
 
     store
         .handle(
@@ -5031,6 +5058,13 @@ fn export_can_be_imported_back_after_clear_and_re_import_is_idempotent() {
     let record = &recalled[0];
     assert_eq!(record["text"], "We build with ninja on the K3 board");
     assert_eq!(record["tags"][0], "important");
+    assert_eq!(record["sensitivity"], "private");
+    let restored_export = store.handle(
+        &owner,
+        &request("privacy.export_data", json!({"include_audit":false}), "import-verify-fields"),
+        false,
+    ).unwrap();
+    assert_eq!(restored_export["session_summaries"], exported["session_summaries"]);
 
     // Re-importing the same document is a no-op: every record already exists,
     // so nothing is duplicated and every record is reported as skipped.

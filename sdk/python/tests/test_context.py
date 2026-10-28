@@ -69,9 +69,37 @@ async def test_greeting_reads_exact_preference_and_respects_settings(hook, monke
             return SimpleNamespace(long_term=LongTerm())
 
     result = await hook._load_greeting_address({'_bridge': Bridge(), 'config': {}})
-    assert result == ('小伟' if mode == 'preferred' else None)
+    assert result == ('张伟' if mode in {'preferred', 'name_only'} else None)
     if mode in {'disabled', 'memory_disabled'}:
         assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_greeting_prefers_newest_explicit_address_slot(hook):
+    def record(key, text, tags, updated):
+        return SimpleNamespace(memory_id=key, text=text, tags=tags,
+                               kind=MemoryKind.PROFILE, updated_at=updated, revision=1)
+
+    records = [
+        record('name', '小明', ('slot:profile.user_name',), 10),
+        record('address', '小红', ('slot:profile.preferred_address',), 20),
+    ]
+
+    class LongTerm:
+        async def search_headers(self, query, **kwargs):
+            return records
+
+        async def get_many(self, ids):
+            return records
+
+    class Bridge:
+        async def settings(self):
+            return {'preference_auto_apply_enabled': True, 'memory_enabled': True}
+
+        async def _client_or_none(self):
+            return SimpleNamespace(long_term=LongTerm())
+
+    assert await hook._load_greeting_address({'_bridge': Bridge(), 'config': {}}) == '小红'
 
 
 @pytest.mark.asyncio

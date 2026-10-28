@@ -263,7 +263,11 @@ async def _load_greeting_address(run: dict) -> str | None:
                 return None
             headers = await client.long_term.search_headers('', kinds=(MemoryKind.PROFILE,), top_k=100)
             records = await client.long_term.get_many([h.memory_id for h in headers])
-            candidates = [r for r in records if r.kind is MemoryKind.PROFILE and 'slot:profile.preferred_address' in r.tags]
+            # Older Runtime versions stored the user's address under the
+            # profile.user_name slot. Treat it as a greeting address too;
+            # only explicitly tagged profile slots are eligible.
+            address_tags = {'slot:profile.preferred_address', 'slot:profile.user_name'}
+            candidates = [r for r in records if r.kind is MemoryKind.PROFILE and address_tags.intersection(r.tags)]
             if not candidates:
                 return None
             newest = max(candidates, key=lambda r: (r.updated_at, r.revision, r.memory_id))

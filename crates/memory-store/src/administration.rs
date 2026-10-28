@@ -1226,7 +1226,7 @@ fn import_summary(
             session_id,account_id,agent_id,memory_space_id,revision,parent_revision,
             summary_payload,source_event_sequence,sync_policy,producer,model_ref,
             policy_version,created_at,hlc,is_current,expires_at
-         ) VALUES(?1,?2,?3,?4,1,NULL,?5,?6,'local_only',?7,NULL,1,?8,?9,1,?10)",
+         ) VALUES(?1,?2,?3,?4,?11,NULL,?5,?6,'local_only',?7,NULL,1,?8,?9,1,?10)",
         params![
             session_id,
             identity.account_id,
@@ -1240,7 +1240,8 @@ fn import_summary(
                 .unwrap_or("agent"),
             created_at,
             hlc,
-            created_at.saturating_add(retention_days.saturating_mul(24 * 60 * 60 * 1000))
+            created_at.saturating_add(retention_days.saturating_mul(24 * 60 * 60 * 1000)),
+            value.get("revision").and_then(Value::as_i64).filter(|n| *n > 0).unwrap_or(1)
         ],
     )
     .map_err(db_error)?;
@@ -1297,18 +1298,16 @@ fn import_memory(
     if exists {
         return Ok(None);
     }
-    // Re-apply the same sensitivity rules as a normal write: a credential-like
-    // body never lands as plaintext-indexable, and a profile row is never
-    // downgraded below `sensitive`.
+    // Preserve the exported classification during restore. Import is a data
+    // round-trip operation; normal write-time policy is applied when the
+    // record is first created. Credential-like content is still forced to
+    // `secret` so a crafted export cannot make credentials indexable.
     let mut sensitivity = match value.get("sensitivity").and_then(Value::as_str) {
         Some(value @ ("public" | "private" | "sensitive" | "secret")) => value,
         _ => "private",
     };
     if super::long_term::looks_like_credential(text) {
         sensitivity = "secret";
-    }
-    if kind == "profile" && matches!(sensitivity, "public" | "private") {
-        sensitivity = "sensitive";
     }
     let source = value
         .get("source")
