@@ -123,6 +123,8 @@ Runtime registration; otherwise the daemon rejects it. Consult the
 [configuration guide](docs/CONFIGURATION_EN.md) when changing retention, summary
 models, embeddings, quotas, or other non-default policies.
 
+The apt commands require a configured Bianbu software source containing these packages. They do not apply to a generic Ubuntu installation without that source.
+
 ### Option 2: build from source
 
 Linux is the target. The verified environment is riscv64 with Rust 1.93.1 and
@@ -130,6 +132,17 @@ Python 3.14.4. The locked dependency set requires **Rust 1.87+** (zbus 5.19 and
 edition 2024), even though this workspace's own `rust-version` is 1.80. Also
 required: Python 3.10+, a C toolchain, pkg-config, and OpenSSL development
 headers (the bundled SQLCipher build links OpenSSL).
+
+Install Rust with rustup from https://rustup.rs/ if it is not already installed. Use Rust 1.93.1 to reproduce the verified build; 1.87 is the highest minimum declared by the locked dependencies, not a separately verified toolchain.
+
+Clone the public source first:
+
+```bash
+git clone https://github.com/spacemit-com/bianbu-agent-memory.git
+cd bianbu-agent-memory
+rustc --version
+cargo --version
+```
 
 Run the commands below from the repository root. A cold release build takes
 several minutes on K3.
@@ -143,6 +156,8 @@ cargo build --workspace --release --locked
 python3 -m venv .venv && . .venv/bin/activate
 python -m pip install -e 'sdk/python'
 ```
+
+Building from source does not install or restart system services. The example below starts a separate development process.
 
 ## Run it in five minutes
 
@@ -321,3 +336,5 @@ field logs.
 The Rust workspace and Python SDK metadata declare Apache-2.0.
 
 That is the tour. Now go write a memory of your own.
+
+[Contributing](CONTRIBUTING.md) | [Version correspondence](VERSIONING.md)

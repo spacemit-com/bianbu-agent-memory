@@ -107,12 +107,25 @@ sudo apt install bianbu-agent-memory bianbu-agent-memoryd
 注册进程，否则会被拒绝。只有要修改保留期、摘要模型、Embedding、配额等非默认策略时，
 才需要翻[配置指南](docs/CONFIGURATION.md)。
 
+上述 apt 命令要求设备已配置包含这些软件包的 Bianbu 软件源，不能直接用于未配置该源的通用 Ubuntu 系统。
+
 ### 方式二：从源码编译
 
 面向 Linux。已验证 riscv64 + Rust 1.93.1 + Python 3.14.4。
 `Cargo.lock` 锁定的依赖实际要求 **Rust 1.87+**（zbus 5.19 使用 edition 2024），
 工作区自身声明的 `rust-version = 1.80` 不足以完成构建。另需 Python 3.10+、
 C 工具链、pkg-config 和 OpenSSL 开发依赖（bundled SQLCipher 会链接 OpenSSL）。
+
+如未安装 Rust，请按 https://rustup.rs/ 的说明安装 rustup。复现已验证环境请使用 Rust 1.93.1；1.87 是锁定依赖声明的最高最低版本要求，尚未单独在该版本上完成构建验证。
+
+先获取公开源码：
+
+```bash
+git clone https://github.com/spacemit-com/bianbu-agent-memory.git
+cd bianbu-agent-memory
+rustc --version
+cargo --version
+```
 
 以下命令都在仓库根目录执行；K3 上首次 release 构建需要数分钟。
 
@@ -125,6 +138,8 @@ cargo build --workspace --release --locked
 python3 -m venv .venv && . .venv/bin/activate
 python -m pip install -e 'sdk/python'
 ```
+
+源码编译不会安装或重启系统服务。下面的示例启动独立的开发进程。
 
 ## 五分钟跑起来
 
@@ -283,3 +298,7 @@ python -m pytest sdk/python/tests -q
 Rust workspace 与 Python SDK 元数据声明 Apache-2.0。
 
 好了，介绍完了。接下来，去写一条属于你的记忆吧。
+
+## 参与贡献
+
+[贡献指南](CONTRIBUTING_CN.md) | [版本说明](VERSIONING_CN.md)
