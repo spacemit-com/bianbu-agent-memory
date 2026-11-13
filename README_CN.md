@@ -295,10 +295,14 @@ python -m pytest sdk/python/tests -q
 - **SDK 不启动 daemon**：连不上先看服务和 socket 路径。
 - **索引不是真相**：权威记录与 Tombstone 决定可见性，索引只是可重建的派生数据。
 
-Rust workspace 与 Python SDK 元数据声明 Apache-2.0。
-
 好了，介绍完了。接下来，去写一条属于你的记忆吧。
 
 ## 参与贡献
 
 [贡献指南](CONTRIBUTING_CN.md) | [版本说明](VERSIONING_CN.md)
+
+## 许可证
+
+本项目自研代码采用 Apache License 2.0，完整条款见 [LICENSE](LICENSE)。
+
+第三方组件、依赖及随仓分发的代码遵循各自的许可证，本项目的许可证不改变这些组件的原有授权。再分发时，应按相应许可证要求保留上游版权声明、许可证正文及 NOTICE 文件。

@@ -333,8 +333,12 @@ field logs.
 - **Indexes are not the truth**: canonical records and tombstones decide
   visibility; indexes are rebuildable derived data.
 
-The Rust workspace and Python SDK metadata declare Apache-2.0.
-
 That is the tour. Now go write a memory of your own.
 
 [Contributing](CONTRIBUTING.md) | [Version correspondence](VERSIONING.md)
+
+## License
+
+The original code developed for this project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full terms.
+
+Third-party components, dependencies, and bundled code remain subject to their respective licenses. This project's license does not relicense those components. Preserve applicable upstream copyright notices, license texts, and NOTICE files when redistributing.
