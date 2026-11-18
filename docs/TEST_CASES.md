@@ -428,7 +428,7 @@ embedding 配置校验（https 拒绝、缺端点拒绝、dims 越界拒绝）�
 | REL-06 | 真实断电 | `scripts/k3_power_loss_test.py --trigger`：`echo b > /proc/sysrq-trigger`（内核立即重启、不做 sync，等效硬掉电）→ 重启后自动比对 boot_id、schema、key package 可用性、标记记忆文本 sha256、命名空间行数、临时文件与 journal | 无损或达到规定恢复率，临时文件可清理 | 脚本已就位（2026-10-09 真断电跑通 PASS：20/20 标记记忆恢复、文本 sha256 一致、行数回到基线；驱动在重启后会先等库自检出结论再采 post）。真实市电拔插需现场受控操作；软件等效掉电会硬重启整台 K3，执行前须确认设备上没有其它在跑的任务 |
 | REL-07 | 资源限制 | 观察 cgroup Memory/Tasks/CPU、磁盘配额和满盘行为 | 超限时可预测拒绝，服务不拖垮系统 | 需执行生产纳管验收 |
 | REL-08 | SBOM/CVE | 生成发布 SBOM，扫描 Rust/Python/系统依赖 | 无阻断级漏洞，结果归档到发布记录 | 需执行 |
-| REL-09 | 七天稳定性 | `scripts/k3_memory_soak.py start`（systemd 采样：60 s 一次 health/stats/RSS/FD/库与 WAL 体积；30 min 一次写入+检索+forget 扰动；24 h 一次计划内重启）→ `verdict` 出验收 JSON | 无内存泄漏、死锁、数据增长失控或错误风暴 | 工具已就位并自测通过（2026-09-23：扰动 put≈90–105 ms / search≈170–185 ms / forget≈7 ms，计划内重启记账正常）；7×24 窗口须等设备无其它任务占用后开始计时 |
+| REL-09 | 七天稳定性 | `scripts/k3_memory_soak.py start`（systemd 采样：60 s 一次 health/stats/RSS/FD/库与 WAL 体积；30 min 一次写入+检索+forget 扰动；24 h 一次计划内重启）→ `verdict` 出验收 JSON | 无内存泄漏、死锁、数据增长失控或错误风暴 | 2026-11-05 固定安装包 0.1.33、现场 reviewed 脚本七天窗口 PASS：10087 次连续采样、327/327 探针成功，全部门禁通过；RSS 允许增长按既定门槛判定，busy/已知 FTS 投诉不判损坏。验收报告《K3_七天稳定性验收报告_20261105.md》及原始证据由内部工作区归档，不随源码仓分发；该报告覆盖现场 reviewed 脚本，不等同仓库任意版本脚本均已验收。 |
 
 ## 8. 测试结果记录模板
 

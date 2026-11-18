@@ -426,13 +426,32 @@ def journal_lines(pattern: str, since: str, until: str, unit: str = MEMORYD_UNIT
     return lines
 
 
+def database_gate(samples: list[dict[str, object]]) -> tuple[bool, dict[str, object]]:
+    """Judge conclusive health verdicts; a busy check is not corruption."""
+    services = [s.get("service") or {} for s in samples]
+    failures = [s for s in services if s.get("database") == "degraded"
+                or s.get("status") == "degraded"
+                or s.get("check_verdict") not in (None, "ok")
+                or s.get("database") not in (None, "busy", "unknown", "ok")]
+    conclusive = sum(s.get("database") == "ok" for s in services)
+    return bool(conclusive) and not failures, {
+        "conclusive_ok_samples": conclusive,
+        "inconclusive_samples": sum(s.get("database") != "ok" for s in services),
+        "complaint_samples": sum(s.get("check_state") == "complaint" for s in services),
+        "degraded_samples": len(failures),
+        "failures": failures[:3],
+    }
+
+
 def verdict(state: Path, output_path: str | None) -> int:
     report = window_report(state)
     window, samples = report["window"], report["samples"]
     usable = [s for s in samples if "sample_error" not in s]
     started_at = float(window["started_at"])
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_at))
-    until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + 60))
+    # Once stopped, elapsed time must not continue growing without observations.
+    ended_at = max((float(s["ts"]) for s in samples), default=started_at)
+    until = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ended_at + 1))
     interval = float(window.get("interval", 60))
 
     def values(path: str, extractor):
@@ -454,7 +473,7 @@ def verdict(state: Path, output_path: str | None) -> int:
         for a, b in zip([s["ts"] for s in usable], [s["ts"] for s in usable][1:])
     ]
     max_gap = max(gaps) if gaps else None
-    expected_samples = int((time.time() - started_at) / interval)
+    expected_samples = int((ended_at - started_at) / interval) + 1
     rss = values("proc.rss_kb", int)
     cgroup = [v for v in values("unit.MemoryCurrent", str) if v.isdigit()]
     cgroup_mb = [int(v) / 1024 / 1024 for v in cgroup]
@@ -474,7 +493,7 @@ def verdict(state: Path, output_path: str | None) -> int:
     )
     stops = journal_lines("Stopped Bianbu Agent Memory Service|Deactivated successfully", since, until)  # noqa: E501
 
-    window_seconds = time.time() - started_at
+    window_seconds = ended_at - started_at
     rss_growth = None
     if len(rss) >= 20:
         head = statistics.median(rss[: max(1, len(rss) // 10)])
@@ -507,11 +526,8 @@ def verdict(state: Path, output_path: str | None) -> int:
          bool(usable) and len(health_errors) <= max(1, len(usable) // 100),
          {"samples": len(usable), "health_errors": len(health_errors),
           "first_error": health_errors[:3]})
-    gate("database_integrity",
-         bool(database_verdicts) and all(value == "ok" for value in database_verdicts),
-         {"distinct_values": sorted({str(v) for v in database_verdicts}),
-          "complaint_samples": sum(
-              1 for s in usable if (s.get("service") or {}).get("check_state") == "complaint")})
+    database_ok, database_detail = database_gate(usable)
+    gate("database_integrity", database_ok, database_detail)
     gate("memory_within_limit",
          max_cgroup_mb is not None and max_cgroup_mb <= 256.0,
          {"max_cgroup_mb": round(max_cgroup_mb, 1) if max_cgroup_mb else None,

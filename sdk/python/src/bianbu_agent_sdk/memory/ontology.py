@@ -567,7 +567,7 @@ _ENGLISH_DECLARATION_LEADS = (
 )
 
 
-def _declared_name(text: str) -> str | None:
+def declared_name(text: str) -> str | None:
     """Return the name a declaration introduces, or None when it cannot be read."""
 
     value = _condensed(text)
@@ -617,7 +617,7 @@ def _names_the_user(text: str) -> bool:
 
     if not _profile_declaration_is_standalone(text):
         return False
-    declared = _declared_name(text)
+    declared = declared_name(text)
     return declared is not None and _looks_like_declared_name(declared)
 
 
@@ -971,6 +971,7 @@ __all__ = [
     "content_limit",
     "declaration_remainder",
     "declared_address",
+    "declared_name",
     "field_dictionary",
     "field_spec",
     "field_value_failure",
